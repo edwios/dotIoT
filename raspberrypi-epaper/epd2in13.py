@@ -114,7 +114,7 @@ class EPD:
         self.send_data(0xD6)
         self.send_data(0x9D)
         self.send_command(WRITE_VCOM_REGISTER)
-        self.send_data(0xA8)                     # VCOM 7C
+        self.send_data(0x73)                     # VCOM 7C
         self.send_command(SET_DUMMY_LINE_PERIOD)
         self.send_data(0x1A)                     # 4 dummy lines per gate
         self.send_command(SET_GATE_TIME)

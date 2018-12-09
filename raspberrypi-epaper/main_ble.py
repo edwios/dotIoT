@@ -37,6 +37,9 @@ m_temp = "0ºC"
 m_rh = "0%"
 m_aqi = "AQI: 0"
 
+EvTH7271="fc:f4:35:bf:6b:37"
+EvTH9640="e3:13:83:3a:33:c8"
+EnvMultiUV0980="e7:7c:12:1f:73:24"
 
 def main():
     global m_temp
@@ -159,8 +162,9 @@ def getEnvInfoFromBLEDevices():
 
     error=False
     try:
-#        devTH = btle.Peripheral("e7:7c:12:1f:73:24",btle.ADDR_TYPE_RANDOM)
-        devRH = btle.Peripheral("e3:13:83:3a:33:c8",btle.ADDR_TYPE_RANDOM)
+#        devTH = btle.Peripheral(EnvMultiUV0980,btle.ADDR_TYPE_RANDOM)
+#        devRH = btle.Peripheral(EvTH9640,btle.ADDR_TYPE_RANDOM)
+        devRH = btle.Peripheral(EvTH7271,btle.ADDR_TYPE_RANDOM)
     except:
         error=True
         print("Cannot connect")
@@ -187,6 +191,7 @@ def getEnvInfoFromBLEDevices():
         m_temp = str(round(int(x, 16)/100))+"ºC"
         x = binascii.b2a_hex(rhB)
         m_rh = str(round(int(x,16)/100))+"%"
+        print(time.strftime('%F %H:%M')+","+str(m_temp)+","+str(m_rh))
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
