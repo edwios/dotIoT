@@ -191,7 +191,7 @@ def getEnvInfoFromBLEDevices():
         m_temp = str(round(int(x, 16)/100))+"ºC"
         x = binascii.b2a_hex(rhB)
         m_rh = str(round(int(x,16)/100))+"%"
-        print(time.strftime('%F %H:%M')+","+str(m_temp)+","+str(m_rh))
+        print(time.strftime('%F %H:%M')+","+str(int(x, 16)/100.0)+","+str(int(x,16)/100.0))
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
