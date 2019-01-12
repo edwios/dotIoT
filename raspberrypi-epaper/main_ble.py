@@ -33,6 +33,7 @@ from bluepy import btle
 import binascii
 
 connected = False
+btconnected=False
 m_temp = "0ºC"
 m_rh = "0%"
 m_aqi = "AQI: 0"
@@ -46,16 +47,14 @@ def main():
     global m_rh
     global m_aqi
     global connected
+    global btconnected
+
+    image = Image.open('dotIoT.tif')
 
     epd = epd2in13.EPD()
     epd.init(epd.lut_full_update)
-    epd.clear_frame_memory(0xFF)
-    epd.display_frame()
 
-    # For simplicity, the arguments are explicit numerical coordinates
-    # for partial update
-    epd.init(epd.lut_partial_update)
-    image = Image.open('dotIoT.tif')
+    wipe_screen()
 ##
  # there are 2 memory areas embedded in the e-paper display
  # and once the display is refreshed, the memory area will be auto-toggled,
@@ -67,6 +66,7 @@ def main():
     epd.set_frame_memory(image, 0, 0)
     epd.display_frame()
 
+    blank_image = Image.new('1', (24, 24), 255)  # 255: clear the frame
     conn_image = Image.new('1', (24, 24), 255)  # 255: clear the frame
     time_image = Image.new('1', (40, 16), 255)  # 255: clear the frame
     date_image = Image.new('1', (64, 16), 255)  # 255: clear the frame
@@ -75,6 +75,7 @@ def main():
     rh_image   = Image.new('1', (62, 32), 255)  # 255: clear the frame
     aqi_image  = Image.new('1', (104, 28), 255)  # 255: clear the frame
 
+    blank_draw = ImageDraw.Draw(blank_image)
     conn_draw = ImageDraw.Draw(conn_image)
     time_draw = ImageDraw.Draw(time_image)
     date_draw = ImageDraw.Draw(date_image)
@@ -88,6 +89,7 @@ def main():
     aqi_font = ImageFont.truetype('/home/edwintam/epap/fonts/Bitstream-Vera-Sans/Vera-Bold.ttf', 24)
     info_font = ImageFont.truetype('/home/edwintam/epap/fonts/noto-mono/NotoMono-Regular.ttf', 12)
     datetime_font = ImageFont.truetype('/home/edwintam/epap/fonts/noto-mono/NotoMono-Regular.ttf', 12)
+    blank_image_width, blank_image_height  = blank_image.size
     conn_image_width, conn_image_height  = conn_image.size
     time_image_width, time_image_height  = time_image.size
     date_image_width, date_image_height  = date_image.size
@@ -106,6 +108,7 @@ def main():
             getEnvInfoFromBLEDevices()
             ipaddr = socket.gethostbyname(h)
         # draw a rectangle to clear the image
+        blank_draw.rectangle((0, 0, blank_image_width, blank_image_height), fill = 255)
         conn_draw.rectangle((0, 0, conn_image_width, conn_image_height), fill = 255)
         time_draw.rectangle((0, 0, time_image_width, time_image_height), fill = 255)
         date_draw.rectangle((0, 0, date_image_width, date_image_height), fill = 255)
@@ -130,8 +133,40 @@ def main():
         epd.set_frame_memory(temp_image.rotate(270, expand=1), 72, 52)
         epd.set_frame_memory(rh_image.rotate(270, expand=1), 72, 180)
         epd.set_frame_memory(aqi_image.rotate(270, expand=1), 32, 92)
+        if btconnected:
+            epd.set_frame_memory(conn_image.rotate(270, expand=1), 88, 2)
+        else:
+            epd.set_frame_memory(blank_image.rotate(270, expand=1), 88, 2)
+
+
         epd.display_frame()
 
+# Wipe screen to white backgroud
+# Would take long time
+def wipe_screen():
+    step=16
+    x=0
+    f=True
+
+    epd = epd2in13.EPD()
+    epd.init(epd.lut_partial_update)
+    while (f):
+        bimage = Image.new('1', (epd2in13.EPD_WIDTH, epd2in13.EPD_HEIGHT), 255)  # 255: clear the frame
+        bdraw = ImageDraw.Draw(bimage)
+        bdraw.rectangle((x, 0, step+x-1, epd2in13.EPD_HEIGHT-1), fill = 0)
+        epd.clear_frame_memory(0xFF)
+        epd.set_frame_memory(bimage, 0, 0)
+        epd.display_frame()
+
+        bimage = Image.new('1', (epd2in13.EPD_WIDTH, epd2in13.EPD_HEIGHT), 255)  # 255: clear the frame
+        bdraw = ImageDraw.Draw(bimage)
+        bdraw.rectangle((x, 0, step+x-1, epd2in13.EPD_HEIGHT-1), fill = 0)
+        epd.clear_frame_memory(0xFF)
+        epd.set_frame_memory(bimage, 0, 0)
+        epd.display_frame()
+
+        x += step
+        f=(x<=epd2in13.EPD_WIDTH)
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
@@ -159,7 +194,9 @@ def reverse(val):
 def getEnvInfoFromBLEDevices():
     global m_temp
     global m_rh
+    global btconnected
 
+    gotdata = False
     error=False
     try:
 #        devTH = btle.Peripheral(EnvMultiUV0980,btle.ADDR_TYPE_RANDOM)
@@ -167,30 +204,37 @@ def getEnvInfoFromBLEDevices():
         devRH = btle.Peripheral(EvTH7271,btle.ADDR_TYPE_RANDOM)
     except:
         error=True
+        btconnected=False
         print("Cannot connect")
 
     if not error:
+        btconnected=True
 #        devTH.setMTU(31)
         devRH.setMTU(31)
 
-        envSensor = btle.UUID("0000181a-0000-1000-8000-00805f9b34fb")
-        envTHSvc = devRH.getServiceByUUID(envSensor) 
-        envRHSvc = devRH.getServiceByUUID(envSensor) 
-        tempUUIDVal = btle.UUID("00002a6e-0000-1000-8000-00805f9b34fb")
-        rhUUIDVal = btle.UUID("00002a6f-0000-1000-8000-00805f9b34fb")
-        tempVal = envRHSvc.getCharacteristics(tempUUIDVal)[0]
-        rhVal = envRHSvc.getCharacteristics(rhUUIDVal)[0]
-        _tempB = tempVal.read()
-        tempB = reverse(_tempB)
-        _rhB = rhVal.read()
-        rhB = reverse(_rhB)
-#        devTH.disconnect()
-        devRH.disconnect()
+        retry = 0
+        while (not gotdata) and (retry < 4):
+            envSensor = btle.UUID("0000181a-0000-1000-8000-00805f9b34fb")
+            envTHSvc = devRH.getServiceByUUID(envSensor) 
+            envRHSvc = devRH.getServiceByUUID(envSensor) 
+            tempUUIDVal = btle.UUID("00002a6e-0000-1000-8000-00805f9b34fb")
+            rhUUIDVal = btle.UUID("00002a6f-0000-1000-8000-00805f9b34fb")
+            tempVal = envRHSvc.getCharacteristics(tempUUIDVal)[0]
+            rhVal = envRHSvc.getCharacteristics(rhUUIDVal)[0]
+            _tempB = tempVal.read()
+            tempB = reverse(_tempB)
+            _rhB = rhVal.read()
+            rhB = reverse(_rhB)
 
-        x = binascii.b2a_hex(tempB)
-        m_temp = str(round(int(x, 16)/100))+"ºC"
-        y = binascii.b2a_hex(rhB)
-        m_rh = str(round(int(y,16)/100))+"%"
+            x = binascii.b2a_hex(tempB)
+            y = binascii.b2a_hex(rhB)
+            if (x != 0) and (y != 0):
+                gotdata = True
+                m_temp = str(round(int(x, 16)/100))+"ºC"
+                m_rh = str(round(int(y,16)/100))+"%"
+            else:
+                retry += 1
+        devRH.disconnect()
         print(time.strftime('%F %H:%M')+","+str(int(x, 16)/100.0)+","+str(int(y,16)/100.0))
 
 # The callback for when a PUBLISH message is received from the server.
