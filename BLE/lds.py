@@ -17,12 +17,14 @@ _ndev = 0
 _gotcallback = False
 _psent = False
 _btconnected = False
-_mqtthub="127.0.0.1"
-_mqttcmd=""
+_mqtthub = "127.0.0.1"
+_mqttcmd = ""
+_httpcmd = ""
+_lastmqttcmd = ""
 _lastmqttcmd = ""
 _choosefromlist = False
-ON_DATA=[1,1,0]
-OFF_DATA=[0,1,0]
+ON_DATA = [1,1,0]
+OFF_DATA = [0,1,0]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-n", "--meshname", help="Name of the mesh network", default="3S11ZFCS")
@@ -34,7 +36,7 @@ parser.add_argument("action", help="Action to turn on off device, or wait for mq
 args = parser.parse_args()
 _meshaction = args.action
 if _meshaction == "on":
-    _data = ON_DATA
+	_data = ON_DATA
 if _meshaction == "off":
 	_data = OFF_DATA
 _meshname = args.meshname
@@ -151,35 +153,46 @@ def cmd(n, command, data):
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
-    global connected
+	global connected
 
-    connected = True
+	connected = True
 #    print("Connected with result code "+str(rc))
 
-    # Subscribing in on_connect() means that if we lose the connection and
-    # reconnect then subscriptions will be renewed.
+	# Subscribing in on_connect() means that if we lose the connection and
+	# reconnect then subscriptions will be renewed.
 #    client.subscribe([("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0)])
-    client.subscribe([("sensornet/env/balcony/brightness", 0), ("sensornet/all", 0), ("sensornet/command", 0)])
+	client.subscribe([("sensornet/env/balcony/brightness", 0), ("sensornet/all", 0), ("sensornet/command", 0)])
 
 def on_disconnect(client, userdata, rc):
-    global connected
+	global connected
 
-    connected = False
-    if rc != 0:
-        print("Unexpected disconnection.")
+	connected = False
+	if rc != 0:
+		print("Unexpected disconnection.")
 
 def on_publish(client, userdata, result):
-    pass
+	pass
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
-    global _lx
-    global _mqttcmd
+	global _lx
+	global _mqttcmd
+	global _lastmqttcmd
+	global _meshdevid
+	global ON_DATA
+	global OFF_DATA
 
 #    print(msg.topic+" "+str(msg.payload))
-    if (msg.topic == "sensornet/command"):
-        _mqttcmd = str(msg.payload.decode("utf-8"))
+	if (msg.topic == "sensornet/command"):
+		_mqttcmd = str(msg.payload.decode("utf-8"))
 #        print("Recevied: %s", _mqttcmd)
+		if (_lastmqttcmd != _mqttcmd):
+			_lastmqttcmd = _mqttcmd
+			print("Recevied %s from MQTT" % _mqttcmd)
+			if (_mqttcmd == "on"):
+				cmd(_meshdevid, 0xd0, ON_DATA)
+			if (_mqttcmd == "off"):
+				cmd(_meshdevid, 0xd0, OFF_DATA)
 
 client = mqtt.Client()
 client.on_connect = on_connect
@@ -221,16 +234,8 @@ def main():
 			cmd(_meshdevid, 0xd0, _data)
 		else:
 			while True:
-				if (_lastmqttcmd != _mqttcmd):
-					_lastmqttcmd = _mqttcmd
-					print("Recevied %s from MQTT" % _mqttcmd)
-					if (_mqttcmd == "on"):
-						cmd(_meshdevid, 0xd0, ON_DATA)
-					if (_mqttcmd == "off"):
-						cmd(_meshdevid, 0xd0, OFF_DATA)
-#				time.sleep(2)
-
-
+				time.sleep(1)
+				pass
 
 if __name__ == '__main__':
 	main()
