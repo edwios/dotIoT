@@ -102,20 +102,14 @@ def foundLDSdevices():
 			print("Error saving presistance dbcache.p")
 	print()
 
-def callback(mesh, mesg):
+def blecallback(mesh, mesg):
 	global _gotcallback
 	global _network
 	global _psent
 
 	_gotcallback = True
-	print("Mesh callback with: %s" % mesg)
-	if _psent:
-		_psent = False
-		try:
-			_network.disconnect()
-		except:
-			print("Disconnected or unable to disconnect")
-	print("callback ended")
+#	print("Mesh callback with: %s" % mesg)
+#	print("callback ended")
 	pass
 
 def cmd(n, command, data):
@@ -131,25 +125,31 @@ def cmd(n, command, data):
 			thisdevice = dev
 			break
 	target = thisdevice.deviceID
-	_network = dimond.dimond(0x0211, thisdevice.addr, _meshname, _meshpass, callback=None)
-	tries = 0
-	_psent = False
-# Somehow dimond disconnect after send_packet, so at the moment, has to force reconnection
-	_btconnected = False
-	while (not _btconnected) and (tries < 5):
-		try:
-			_network.connect()
-			_btconnected = True
-			print("Connected to mesh")
-		except:
-			tries += 1
-			print("Reconnecting attempt %s" % tries)
-			_btconnected = False
-			time.sleep(2)
+	if not _btconnected:
+		print("Connecting to mesh")
+		_network = dimond.dimond(0x0211, thisdevice.addr, _meshname, _meshpass, callback=blecallback)
+		tries = 0
+	# Somehow dimond disconnect after send_packet, so at the moment, has to force reconnection
+	#	_btconnected = False
+		while (not _btconnected) and (tries < 5):
+			try:
+				_network.connect()
+				_btconnected = True
+				print("Connected to mesh")
+			except:
+				tries += 1
+				print("Reconnecting attempt %s" % tries)
+				_btconnected = False
+				time.sleep(2)
+		if not _btconnected:
+			print("Cannot connect to mesh!")
+			_lastmqttcmd = None
+	print("Is connected %s" % _btconnected)
 	if _btconnected:
-		_psent = True
 		print("Sending to addr %s, MAC: %s, Cmd: %s, Data: %s" % (target, thisdevice.addr, command, data))
+		_psent = False
 		_network.send_packet(target, command, data)
+		_psent = True
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
@@ -193,6 +193,10 @@ def on_message(client, userdata, msg):
 				cmd(_meshdevid, 0xd0, ON_DATA)
 			if (_mqttcmd == "off"):
 				cmd(_meshdevid, 0xd0, OFF_DATA)
+			if (_mqttcmd == "disconnect"):
+				if _btconnected:
+					_network.disconnect()
+					_btconnected = False
 
 client = mqtt.Client()
 client.on_connect = on_connect

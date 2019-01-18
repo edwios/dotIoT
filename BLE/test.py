@@ -1,21 +1,45 @@
 import dimond
 from bluepy import btle
+import time
 
-_meshname = input("Input the mesh name [3S11ZFCS]: ") or "3S11ZFCS"
-_meshpass = input("Input the mesh password [096355]: ") or "096355"
+devaddr = "a4:c1:38:4b:40:26"
+_meshname = "3S11ZFCS"
+_meshpass = "096355"
+_btconnected = False
 
-def callback(self, mesg):
+if (_meshname == ""):
+	_meshname = input("Input the mesh name [3S11ZFCS]: ") or "3S11ZFCS"
+if (_meshpass == ""):
+	_meshpass = input("Input the mesh password [096355]: ") or "096355"
+
+def mycallback(self, mesg):
 	print("Device called back: ")
 	print(mesg)
 
 if True:
-	network = dimond.dimond(0x0211, "a4:c1:38:3e:48:0a", _meshname, _meshpass, callback=callback)
-	network.connect()
-	print("Connected")
-	target = 0x04
+	network = dimond.dimond(0x0211, devaddr, _meshname, _meshpass, callback=mycallback)
+	target = 0x06
 	command = 0xd0
 	data = [1,1,0]
-	network.send_packet(target, command, data)
+	tries = 0
+	while (not _btconnected) and (tries < 5):
+		try:
+			print("Connecting to %s" % _meshname)
+			network.connect()
+			_btconnected = True
+			print("Connected to mesh")
+		except:
+			tries += 1
+			print("Reconnecting attempt %s" % tries)
+			_btconnected = False
+			time.sleep(2)
+	if _btconnected:
+		_psent = True
+		print("Sending to addr %s, MAC: %s, Cmd: %s, Data: %s" % (target, devaddr, command, data))
+		network.send_packet(target, command, data)
+		print("Packet sent")
+	else:
+		print("Repeated fail to connect")
 
 
 if False:
