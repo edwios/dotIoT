@@ -1,3 +1,22 @@
+#!/usr/bin/env python3
+
+##
+ #  @filename   :   httpserver.py
+ #  @brief      :   HTTP server script to relay http commands to MQTT
+ #  @author     :   Edwin Tam
+ #
+ #  Copyright (C) 2019 Telldus Technologies AB
+ #
+ #
+ # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ # FITNESS OR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ # AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ # LIABILITY WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ # THE SOFTWARE.
+ ##
+
 from aiohttp import web
 from subprocess import call
 import paho.mqtt.client as mqtt
@@ -32,6 +51,8 @@ async def HttpHandler(request):
 			if (_httpcmd == "off"):
 				mqttclient.publish("sensornet/command", "off")
 #				call([CMDEXE, "-d", "1", "off"])
+		data = {'status': 'OK'}
+		return web.json_response(data)
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):

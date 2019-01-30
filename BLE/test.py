@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+
+# Script to test the basic functions of dimond
+
 import dimond
 from bluepy import btle
 import time

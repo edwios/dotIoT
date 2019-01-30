@@ -1,6 +1,6 @@
 ##
- #  @filename   :   main_ble.py
- #  @brief      :   Display BLE sensor info on epapar display on RPi0w
+ #  @filename   :   startup.py
+ #  @brief      :   Startup script for epapar display on RPi0w
  #  @author     :   Edwin Tam
  #
  #  Copyright (C) 2019 Telldus Technologies AB
@@ -20,23 +20,25 @@ import epd2in13
 import time
 from PIL import Image, ImageDraw, ImageFont
 import paho.mqtt.client as mqtt
-from bluepy import btle
 import binascii
 
 connected = False
 btconnected=False
-m_temp = "0ºC"
+m_broadcast = "No message"
 m_rh = "0%"
-m_aqi = "AQI: 0"
+m_cmd = "Idle"
 
 EvTH7271="fc:f4:35:bf:6b:37"
 EvTH9640="e3:13:83:3a:33:c8"
 EnvMultiUV0980="e7:7c:12:1f:73:24"
+EnvMultiIR9070="FD:CA:60:13:52:9E"
+
+MQTT_HOST = "127.0.0.1"
 
 def main():
-    global m_temp
+    global m_broadcast
     global m_rh
-    global m_aqi
+    global m_cmd
     global connected
     global btconnected
 
@@ -62,7 +64,7 @@ def main():
     time_image = Image.new('1', (40, 16), 255)  # 255: clear the frame
     date_image = Image.new('1', (64, 16), 255)  # 255: clear the frame
     info_image = Image.new('1', (112, 18), 255)  # 255: clear the frame
-    temp_image = Image.new('1', (126, 48), 255)  # 255: clear the frame
+    temp_image = Image.new('1', (200, 32), 255)  # 255: clear the frame
     rh_image   = Image.new('1', (62, 32), 255)  # 255: clear the frame
     aqi_image  = Image.new('1', (104, 28), 255)  # 255: clear the frame
 
@@ -75,7 +77,7 @@ def main():
     rh_draw = ImageDraw.Draw(rh_image)
     aqi_draw = ImageDraw.Draw(aqi_image)
     conn_font = ImageFont.truetype('/home/edwintam/epap/fonts/entypo/Entypo.otf', 24)
-    temp_font = ImageFont.truetype('/home/edwintam/epap/fonts/nunito/Nunito-Bold.ttf', 48)
+    temp_font = ImageFont.truetype('/home/edwintam/epap/fonts/nunito/Nunito-Bold.ttf', 28)
     rh_font = ImageFont.truetype('/home/edwintam/epap/fonts/nunito/Nunito-Bold.ttf', 28)
     aqi_font = ImageFont.truetype('/home/edwintam/epap/fonts/Bitstream-Vera-Sans/Vera-Bold.ttf', 24)
     info_font = ImageFont.truetype('/home/edwintam/epap/fonts/noto-mono/NotoMono-Regular.ttf', 12)
@@ -90,13 +92,12 @@ def main():
     aqi_image_width, aqi_image_height  = aqi_image.size
     h = socket.gethostname()+".local"
     lastTime = time.monotonic()
-    getEnvInfoFromBLEDevices()
     ipaddr = socket.gethostbyname(h)
     while (True):
         thisTime = time.monotonic()
-        if (thisTime - lastTime) > 300:
+        if (thisTime - lastTime) > 10:
             lastTime = time.monotonic()
-            getEnvInfoFromBLEDevices()
+            h = socket.gethostname()+".local"
             ipaddr = socket.gethostbyname(h)
         # draw a rectangle to clear the image
         blank_draw.rectangle((0, 0, blank_image_width, blank_image_height), fill = 255)
@@ -114,20 +115,15 @@ def main():
         time_draw.text((0, 0), time.strftime('%H:%M'), font = datetime_font, fill = 0)
         date_draw.text((0, 0), time.strftime('%d/%m'), font = datetime_font, fill = 0)
         info_draw.text((0, 6), ipaddr, font=info_font, fill=0)
-        temp_draw.text((0, 0), m_temp, font=temp_font, fill=0)
+        temp_draw.text((0, 0), m_broadcast, font=temp_font, fill=0)
         rh_draw.text((0, 4), m_rh, font=rh_font, fill=0)
-        aqi_draw.text((0, 4), m_aqi, font=aqi_font, fill=0)
+        aqi_draw.text((0, 4), m_cmd, font=aqi_font, fill=0)
         epd.set_frame_memory(conn_image.rotate(270, expand=1), 104, 2)
         epd.set_frame_memory(time_image.rotate(270, expand=1), 104, 208)
         epd.set_frame_memory(date_image.rotate(270, expand=1), 104, 16)
         epd.set_frame_memory(info_image.rotate(270, expand=1), 8, 134)
         epd.set_frame_memory(temp_image.rotate(270, expand=1), 72, 52)
-        epd.set_frame_memory(rh_image.rotate(270, expand=1), 72, 180)
         epd.set_frame_memory(aqi_image.rotate(270, expand=1), 32, 92)
-        if btconnected:
-            epd.set_frame_memory(conn_image.rotate(270, expand=1), 88, 2)
-        else:
-            epd.set_frame_memory(blank_image.rotate(270, expand=1), 88, 2)
 
 
         epd.display_frame()
@@ -168,7 +164,7 @@ def on_connect(client, userdata, flags, rc):
 
     # Subscribing in on_connect() means that if we lose the connection and
     # reconnect then subscriptions will be renewed.
-    client.subscribe([("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0)])
+    client.subscribe([("sensornet/broadcast", 0), ("sensornet/command", 0), ("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0)])
 
 def on_disconnect(client, userdata, rc):
     global connected
@@ -182,70 +178,25 @@ def reverse(val):
     swb[0::2], swb[1::2] = val[1::2], val[0::2]
     return swb
 
-def getEnvInfoFromBLEDevices():
-    global m_temp
-    global m_rh
-    global btconnected
-
-    gotdata = False
-    error=False
-    try:
-#        devTH = btle.Peripheral(EnvMultiUV0980,btle.ADDR_TYPE_RANDOM)
-#        devRH = btle.Peripheral(EvTH9640,btle.ADDR_TYPE_RANDOM)
-        devRH = btle.Peripheral(EvTH7271,btle.ADDR_TYPE_RANDOM)
-    except:
-        error=True
-        btconnected=False
-        print("Cannot connect")
-
-    if not error:
-        btconnected=True
-#        devTH.setMTU(31)
-        devRH.setMTU(31)
-
-        retry = 0
-        while (not gotdata) and (retry < 4):
-            envSensor = btle.UUID("181a")
-            envTHSvc = devRH.getServiceByUUID(envSensor) 
-            envRHSvc = devRH.getServiceByUUID(envSensor) 
-            tempUUIDVal = btle.UUID("2a6e")
-            rhUUIDVal = btle.UUID("2a6f")
-            tempVal = envRHSvc.getCharacteristics(tempUUIDVal)[0]
-            rhVal = envRHSvc.getCharacteristics(rhUUIDVal)[0]
-            _tempB = tempVal.read()
-            tempB = reverse(_tempB)
-            _rhB = rhVal.read()
-            rhB = reverse(_rhB)
-
-            x = binascii.b2a_hex(tempB)
-            y = binascii.b2a_hex(rhB)
-            if (x != 0) and (y != 0):
-                gotdata = True
-                m_temp = str(round(int(x, 16)/100))+"ºC"
-                m_rh = str(round(int(y,16)/100))+"%"
-            else:
-                retry += 1
-        devRH.disconnect()
-        print(time.strftime('%F %H:%M')+","+str(int(x, 16)/100.0)+","+str(int(y,16)/100.0))
-
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
-    global m_aqi
+    global m_cmd
+    global m_broadcast
 
 #    print(msg.topic+" "+str(msg.payload))
-    if (msg.topic == "sensornet/env/home/living/aqi"):
+    if (msg.topic == "sensornet/command"):
         x = str(msg.payload.decode("utf-8"))
-        m_aqi = "AQI: "+str(round(float(x)))
-    if (msg.topic == "sensornet/env/home/balcony/humidity"):
+        m_cmd = x
+    if (msg.topic == "sensornet/broadcast"):
         x = str(msg.payload.decode("utf-8"))
-#        m_rh = str(round(float(x)))+"%"
+        m_broadcast = x
 
 client = mqtt.Client()
 client.on_connect = on_connect
 client.on_disconnect = on_disconnect
 client.on_message = on_message
 
-client.connect_async("10.0.1.250", 1883, 60)
+client.connect_async(MQTT_HOST, 1883, 60)
 
 # Non-Blocking call that processes network traffic, dispatches callbacks and
 # handles reconnecting.
@@ -255,3 +206,4 @@ client.loop_start() #start loop to process received messages
 
 if __name__ == '__main__':
     main()
+

@@ -1,3 +1,8 @@
+##
+ # Script to relay BLE sensor to MQTT, superceed by leGateway.
+ #
+ ##
+ 
 import socket
 import time
 import paho.mqtt.client as mqtt
