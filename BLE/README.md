@@ -6,7 +6,8 @@ This is an early trial linking up the Smartline Flow devices with the Telldus pl
 2. Create a path for the dotIoT A.I. core to include Smartline Flow items under her control,
 3. Solve an immediate headache in my home where the automation interfers with people dynamics.
 
-There are a few python scripts deveveloped to bring upon this integration:
+There are a few python scripts deveveloped to bring upon this integration. For usage instructions, run script with option --help :
+
 - httpserver.py
 	This script aimed to provide a simple and unsecured HTTP server to receive commands sent from the events created in Telldus Live!. These commands then translated into appropriate MQTT messages and sent to the MQTT broker.
 
