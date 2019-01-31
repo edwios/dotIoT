@@ -39,7 +39,7 @@ dotIoTDevices = []
 
 #dotIoTDevices = [{"name":"EnvMultiIR9070", "addr":"FD:CA:60:13:52:9E"}, {"name":"EvTH7271", "addr":"fc:f4:35:bf:6b:37"},{"name":"EvTH9640", "addr":"e3:13:83:3a:33:c8"},{"name":"EnvMultiUV0980", "addr":"e7:7c:12:1f:73:24"}]
 default_dotIoTDevices = [{"name":"EvTH2618", "addr":"FF:28:58:4C:90:0A"}]
-mqtthub="127.0.0.1"
+m_mqtthub="127.0.0.1"
 
 
 class ScanDelegate(DefaultDelegate):
@@ -71,20 +71,9 @@ def foundDotIoTdevices(devname):
 
 
 def main():
-    global m_temp
-    global m_rh
-    global m_aqi
-    global m_pr
-    global m_lx
-    global m_luxth
     global m_period
-    global dotIoTDevices
-    global default_dotIoTDevices
-    global gotdata
-    global connected
-    global btconnected
-    global client
-
+    global m_luxth
+    global m_mqtthub
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-P", "--period", type=int, help="Period of each poll", default=5)
@@ -94,8 +83,8 @@ def main():
     args = parser.parse_args()
     m_period = args.period
     m_luxth = args.lux
+    m_mqtthub=args.mqtthost
     devname = args.name
-    mqtthub=args.mqtthost
 
     if devname != None:
         foundDotIoTdevices(devname)
@@ -104,6 +93,15 @@ def main():
         print("%s not found, using default devices" % devname)
     h = socket.gethostname()+".local"
     lastTime = time.monotonic()
+
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_publish = on_publish
+    client.on_disconnect = on_disconnect
+    client.on_message = on_message
+    client.connect_async(m_mqtthub, 1883, 60)
+    client.loop_start() #start loop to process received messages
+    
     while (True):
         thisTime = time.monotonic()
         if (thisTime - lastTime) > m_period:
@@ -111,7 +109,7 @@ def main():
             for i in dotIoTDevices:
                 gotdata = False
                 try:
-                    getEnvInfoFromBLEDevices(i)
+                    gotdata = getEnvInfoFromBLEDevices(i)
                 except:
                     pass
                 if gotdata:
@@ -153,7 +151,6 @@ def getEnvInfoFromBLEDevices(iotdevice):
     global m_pr
     global m_lx
     global btconnected
-    global gotdata
 
     gotdata = False
     error=False
@@ -196,6 +193,7 @@ def getEnvInfoFromBLEDevices(iotdevice):
             m_lx = 0
             print("Cannot get data from device")
         devTH.disconnect()
+    return gotdata
 
 def on_publish(client, userdata, result):
     pass
@@ -209,20 +207,6 @@ def on_message(client, userdata, msg):
 #    if (msg.topic == "sensornet/env/home/balcony/humidity"):
 #        x = str(msg.payload.decode("utf-8"))
 #        m_rh = str(round(float(x)))+"%"
-
-client = mqtt.Client()
-client.on_connect = on_connect
-client.on_publish = on_publish
-client.on_disconnect = on_disconnect
-client.on_message = on_message
-
-client.connect_async(mqtthub, 1883, 60)
-
-# Non-Blocking call that processes network traffic, dispatches callbacks and
-# handles reconnecting.
-# Other loop*() functions are available that give a threaded interface and a
-# manual interface.
-client.loop_start() #start loop to process received messages
 
 if __name__ == '__main__':
     main()

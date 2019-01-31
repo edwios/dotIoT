@@ -53,13 +53,11 @@ async def HttpHandler(request):
 		return web.json_response(data)
 
 def on_connect(client, userdata, flags, rc):
-	global connected
 	connected = True
 	print("Connected with result code "+str(rc))
 	client.subscribe([("sensornet/env/balcony/brightness", 0), ("sensornet/all", 0), ("sensornet/command", 0)])
 
 def on_disconnect(client, userdata, rc):
-	global connected
 	connected = False
 	if rc != 0:
 		print("Unexpected disconnection.")

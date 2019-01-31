@@ -12,6 +12,7 @@ There are a few python scripts deveveloped to bring upon this integration:
 
 - lds.py
 	This is a simple gateway constructed to listen to commands sent over MQTT and translate these commands into appropriate PDU of the Telink mesh, and send it out.
+	It can also be used to scan the BLE mesh network for devices to connected to. At the moment, only Telink mesh is supported.
 
 - leGateway.py
 	This is a simple gateway constructed to gather some data from a BLE device and publish the data through MQTT to the MQTT broker.

@@ -35,42 +35,10 @@ _gotcallback = False
 _psent = False
 _btconnected = False
 _mqtthub = "127.0.0.1"
-_mqttcmd = ""
-_httpcmd = ""
 _lastmqttcmd = ""
-_lastmqttcmd = ""
-_choosefromlist = False
 ON_DATA = [1,1,0]
 OFF_DATA = [0,1,0]
 
-parser = argparse.ArgumentParser()
-parser.add_argument("-n", "--meshname", help="Name of the mesh network", default="3S11ZFCS")
-parser.add_argument("-p", "--meshpass", help="Password of the mesh network", default="096355")
-parser.add_argument("-d", "--did", help="Device to control", type=int, default=1)
-parser.add_argument("-m", "--dmac", help="MAC address of the device to control")
-parser.add_argument("-c", "--choose", help="Choose from a list of devices to control", action="store_true")
-parser.add_argument("action", help="Action to turn on off device, or wait for mqtt input")
-args = parser.parse_args()
-_meshaction = args.action
-if _meshaction == "on":
-	_data = ON_DATA
-if _meshaction == "off":
-	_data = OFF_DATA
-_meshname = args.meshname
-_meshpass = args.meshpass
-_meshdevid = args.did
-_meshdevmac = args.dmac
-_choosefromlist = args.choose
-
-if (_meshname == ""):
-	_meshname = input("Input the mesh name [3S11ZFCS]: ") or "3S11ZFCS"
-if (_meshpass == ""):
-	_meshpass = input("Input the mesh password [096355]: ") or "096355"
-
-if (_choosefromlist):
-	print("Will have device in mesh %s from below list %s" % (_meshname, args.action))
-else:
-	print("Will have device #%s %s in mesh %s" % (_meshdevid, args.action, _meshname))
 
 class ScanDelegate(DefaultDelegate):
 	def __init__(self):
@@ -114,18 +82,13 @@ def foundLDSdevices():
 
 def blecallback(mesh, mesg):
 	global _gotcallback
-	global _network
-	global _psent
 
 	_gotcallback = True
 	pass
 
 def cmd(n, command, data):
-	global _gotcallback
 	global _network
 	global _psent
-	global _meshname
-	global _meshpass
 	global _btconnected
 
 	for dev in list(_ldsdevices.values()):
@@ -134,7 +97,7 @@ def cmd(n, command, data):
 			break
 	target = thisdevice.deviceID
 	if not _btconnected:
-		print("Connecting to mesh")
+		print("Connecting to mesh %s (%s) via device %s" % (_meshname, _meshpass, thisdevice.addr))
 		_network = dimond.dimond(0x0211, thisdevice.addr, _meshname, _meshpass, callback=blecallback)
 		tries = 0
 		# The BLE connection may not always happen on a Raspberry Pi due to the hardware limitation
@@ -170,7 +133,6 @@ def on_connect(client, userdata, flags, rc):
 
 def on_disconnect(client, userdata, rc):
 	global connected
-
 	connected = False
 	if rc != 0:
 		print("Unexpected disconnection.")
@@ -180,53 +142,62 @@ def on_publish(client, userdata, result):
 
 # The callback for when a PUBLISH message is received from the broker.
 def on_message(client, userdata, msg):
-	global _lx
-	global _mqttcmd
 	global _lastmqttcmd
-	global _meshdevid
-	global ON_DATA
-	global OFF_DATA
 
 	if (msg.topic == "sensornet/command"):
-		_mqttcmd = str(msg.payload.decode("utf-8"))
-		if (_lastmqttcmd != _mqttcmd):
-			_lastmqttcmd = _mqttcmd
-			print("Recevied %s from MQTT" % _mqttcmd)
-			if (_mqttcmd == "on"):
+		mqttcmd = str(msg.payload.decode("utf-8"))
+		if (_lastmqttcmd != mqttcmd):
+			_lastmqttcmd = mqttcmd
+			print("Recevied %s from MQTT" % mqttcmd)
+			if (mqttcmd == "on"):
 				cmd(_meshdevid, 0xd0, ON_DATA)
-			if (_mqttcmd == "off"):
+			if (mqttcmd == "off"):
 				cmd(_meshdevid, 0xd0, OFF_DATA)
-			if (_mqttcmd == "disconnect"):
+			if (mqttcmd == "disconnect"):
 				if _btconnected:
 					_network.disconnect()
 					_btconnected = False
 
-client = mqtt.Client()
-client.on_connect = on_connect
-client.on_publish = on_publish
-client.on_disconnect = on_disconnect
-client.on_message = on_message
-client.connect_async(_mqtthub, 1883, 60)
-client.loop_start() #start loop to process received messages
 
 def main():
 	global _ndev
-	global _network
 	global _meshdevid
-	global _data
 	global _ldsdevices
-	global _action
-	global _mqttcmd
-	global _lastmqttcmd
-	global _doinit
-	global ON_DATA
-	global OFF_DATA
+	global _meshname
+	global _meshpass
+
+	parser = argparse.ArgumentParser()
+	parser.add_argument("-n", "--meshname", help="Name of the mesh network", default="3S11ZFCS")
+	parser.add_argument("-p", "--meshpass", help="Password of the mesh network", default="096355")
+	parser.add_argument("-d", "--did", help="Device to control", type=int, default=1)
+	parser.add_argument("-c", "--choose", help="Choose from a list of devices to control", action="store_true")
+	parser.add_argument("action", help="Action to turn on off device, or wait for mqtt input")
+	args = parser.parse_args()
+	meshaction = args.action
+	if meshaction == "on":
+		data = ON_DATA
+	if meshaction == "off":
+		data = OFF_DATA
+	_meshname = args.meshname
+	_meshpass = args.meshpass
+	_meshdevid = args.did
+	choosefromlist = args.choose
+
+	if (_meshname == ""):
+		_meshname = input("Input the mesh name [3S11ZFCS]: ") or "3S11ZFCS"
+	if (_meshpass == ""):
+		_meshpass = input("Input the mesh password [096355]: ") or "096355"
+
+	if (choosefromlist):
+		print("Will have device in mesh %s from below list %s" % (_meshname, args.action))
+	else:
+		print("Will have device #%s %s in mesh %s" % (_meshdevid, args.action, _meshname))
 
 	# Instead of looking for devices everytime, let's use a cache :)
-	if os.path.exists("dbcache.p") and (not _choosefromlist):
-		print("Loading cache")
+	if os.path.exists("dbcache.p") and (not choosefromlist):
 		_ldsdevices = pickle.load(open("dbcache.p", "rb"))
 		_ndev = len(_ldsdevices)
+		print("Loaded %s devices from cache" % _ndev)
 	else:
 		# Ahem, first time, let's do it the hard way
 		foundLDSdevices()
@@ -237,11 +208,20 @@ def main():
 			for dev in list(_ldsdevices.values()):
 				if dev.seq == devn:
 					_meshdevid = dev.deviceID
+
+	client = mqtt.Client()
+	client.on_connect = on_connect
+	client.on_publish = on_publish
+	client.on_disconnect = on_disconnect
+	client.on_message = on_message
+	client.connect_async(_mqtthub, 1883, 60)
+	client.loop_start() #start loop to process received messages
+
 	if (_meshdevid >= 0) and (_ndev > 0):
-		if (_meshaction == "on") or (_meshaction == "off"):
+		if (meshaction == "on") or (meshaction == "off"):
 			# currently only simple ON/OFF is implemented
 			# For other commands, look into the Telink manuals
-			cmd(_meshdevid, 0xd0, _data)
+			cmd(_meshdevid, 0xd0, data)
 		else:
 			while True:
 				time.sleep(1)

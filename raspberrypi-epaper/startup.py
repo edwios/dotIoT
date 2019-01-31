@@ -35,10 +35,19 @@ EnvMultiIR9070="FD:CA:60:13:52:9E"
 MQTT_HOST = "127.0.0.1"
 
 def main():
-    global m_broadcast
-    global m_cmd
-    global connected
-    global btconnected
+
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
+    client.on_message = on_message
+
+    client.connect_async(MQTT_HOST, 1883, 60)
+
+    # Non-Blocking call that processes network traffic, dispatches callbacks and
+    # handles reconnecting.
+    # Other loop*() functions are available that give a threaded interface and a
+    # manual interface.
+    client.loop_start() #start loop to process received messages
 
     image = Image.open('dotIoT.tif')
 
@@ -182,19 +191,6 @@ def on_message(client, userdata, msg):
     if (msg.topic == "sensornet/broadcast"):
         x = str(msg.payload.decode("utf-8"))
         m_broadcast = x
-
-client = mqtt.Client()
-client.on_connect = on_connect
-client.on_disconnect = on_disconnect
-client.on_message = on_message
-
-client.connect_async(MQTT_HOST, 1883, 60)
-
-# Non-Blocking call that processes network traffic, dispatches callbacks and
-# handles reconnecting.
-# Other loop*() functions are available that give a threaded interface and a
-# manual interface.
-client.loop_start() #start loop to process received messages
 
 if __name__ == '__main__':
     main()
