@@ -25,7 +25,7 @@ import time
 
 HOST_NAME = 'localhost'
 PORT_NUMBER = 80
-CMDEXE = '/home/edwintam/BLE/lds.py'
+CMDEXE = 'lds.py'
 
 _mqtthub = "127.0.0.1"
 connected = False
@@ -47,14 +47,11 @@ async def HttpHandler(request):
 			print("Recevied %s from HTTP" % _httpcmd)
 			if (_httpcmd == "on"):
 				mqttclient.publish("sensornet/command", "on")
-#				call([CMDEXE, "-d", "1", "on"])
 			if (_httpcmd == "off"):
 				mqttclient.publish("sensornet/command", "off")
-#				call([CMDEXE, "-d", "1", "off"])
 		data = {'status': 'OK'}
 		return web.json_response(data)
 
-# The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
 	global connected
 	connected = True

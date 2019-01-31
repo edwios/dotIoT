@@ -72,3 +72,11 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots
 fastlane/test_output
+
+# old code
+#
+# Old and retired, or code for testing, illustration
+
+_archived_code
+copy2pi.sh
+

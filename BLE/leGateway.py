@@ -123,7 +123,7 @@ def main():
             ipaddr = socket.gethostbyname(h)
 
 
-# The callback for when the client receives a CONNACK response from the server.
+# The callback for when the client successfully connected to the MQTT broker
 def on_connect(client, userdata, flags, rc):
     global connected
 
@@ -163,18 +163,16 @@ def getEnvInfoFromBLEDevices(iotdevice):
     m_pr = 0
     m_lx = 0
 
-#    print("Connecting to %s" % devaddr)
     try:
         devTH = btle.Peripheral(devaddr,btle.ADDR_TYPE_RANDOM)
     except:
         error=True
         btconnected=False
-#        print("Cannot connect")
 
     if not error:
         btconnected=True
-#        devTH.setMTU(31)
-
+        # Set the MTU to bigger value if dealing with large data volume
+        # devTH.setMTU(31)
         retry = 0
         while (not gotdata) and (retry < 4):
             envSensor = btle.UUID("181a")
@@ -202,7 +200,7 @@ def getEnvInfoFromBLEDevices(iotdevice):
 def on_publish(client, userdata, result):
     pass
 
-# The callback for when a PUBLISH message is received from the server.
+# The callback for when a PUBLISH message is received from the broker.
 def on_message(client, userdata, msg):
     global m_aqi
 

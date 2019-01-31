@@ -25,7 +25,6 @@ import binascii
 connected = False
 btconnected=False
 m_broadcast = "No message"
-m_rh = "0%"
 m_cmd = "Idle"
 
 EvTH7271="fc:f4:35:bf:6b:37"
@@ -37,7 +36,6 @@ MQTT_HOST = "127.0.0.1"
 
 def main():
     global m_broadcast
-    global m_rh
     global m_cmd
     global connected
     global btconnected
@@ -64,22 +62,19 @@ def main():
     time_image = Image.new('1', (40, 16), 255)  # 255: clear the frame
     date_image = Image.new('1', (64, 16), 255)  # 255: clear the frame
     info_image = Image.new('1', (112, 18), 255)  # 255: clear the frame
-    temp_image = Image.new('1', (200, 32), 255)  # 255: clear the frame
-    rh_image   = Image.new('1', (62, 32), 255)  # 255: clear the frame
-    aqi_image  = Image.new('1', (104, 28), 255)  # 255: clear the frame
+    mesg_image = Image.new('1', (200, 32), 255)  # 255: clear the frame
+    cmd_image  = Image.new('1', (104, 28), 255)  # 255: clear the frame
 
     blank_draw = ImageDraw.Draw(blank_image)
     conn_draw = ImageDraw.Draw(conn_image)
     time_draw = ImageDraw.Draw(time_image)
     date_draw = ImageDraw.Draw(date_image)
     info_draw = ImageDraw.Draw(info_image)
-    temp_draw = ImageDraw.Draw(temp_image)
-    rh_draw = ImageDraw.Draw(rh_image)
-    aqi_draw = ImageDraw.Draw(aqi_image)
+    mesg_draw = ImageDraw.Draw(mesg_image)
+    cmd_draw = ImageDraw.Draw(cmd_image)
     conn_font = ImageFont.truetype('/home/edwintam/epap/fonts/entypo/Entypo.otf', 24)
-    temp_font = ImageFont.truetype('/home/edwintam/epap/fonts/nunito/Nunito-Bold.ttf', 28)
-    rh_font = ImageFont.truetype('/home/edwintam/epap/fonts/nunito/Nunito-Bold.ttf', 28)
-    aqi_font = ImageFont.truetype('/home/edwintam/epap/fonts/Bitstream-Vera-Sans/Vera-Bold.ttf', 24)
+    mesg_font = ImageFont.truetype('/home/edwintam/epap/fonts/nunito/Nunito-Bold.ttf', 28)
+    cmd_font = ImageFont.truetype('/home/edwintam/epap/fonts/Bitstream-Vera-Sans/Vera-Bold.ttf', 24)
     info_font = ImageFont.truetype('/home/edwintam/epap/fonts/noto-mono/NotoMono-Regular.ttf', 12)
     datetime_font = ImageFont.truetype('/home/edwintam/epap/fonts/noto-mono/NotoMono-Regular.ttf', 12)
     blank_image_width, blank_image_height  = blank_image.size
@@ -87,9 +82,8 @@ def main():
     time_image_width, time_image_height  = time_image.size
     date_image_width, date_image_height  = date_image.size
     info_image_width, info_image_height  = info_image.size
-    temp_image_width, temp_image_height  = temp_image.size
-    rh_image_width, rh_image_height  = rh_image.size
-    aqi_image_width, aqi_image_height  = aqi_image.size
+    mesg_image_width, mesg_image_height  = mesg_image.size
+    cmd_image_width, cmd_image_height  = cmd_image.size
     h = socket.gethostname()+".local"
     lastTime = time.monotonic()
     ipaddr = socket.gethostbyname(h)
@@ -105,9 +99,8 @@ def main():
         time_draw.rectangle((0, 0, time_image_width, time_image_height), fill = 255)
         date_draw.rectangle((0, 0, date_image_width, date_image_height), fill = 255)
         info_draw.rectangle((0, 0, info_image_width, info_image_height), fill = 255)
-        temp_draw.rectangle((0, 0, temp_image_width, temp_image_height), fill = 255)
-        rh_draw.rectangle((0, 0, rh_image_width, rh_image_height), fill = 255)
-        aqi_draw.rectangle((0, 0, aqi_image_width, aqi_image_height), fill = 255)
+        mesg_draw.rectangle((0, 0, mesg_image_width, mesg_image_height), fill = 255)
+        cmd_draw.rectangle((0, 0, cmd_image_width, cmd_image_height), fill = 255)
         if connected:
             conn_draw.text((0, 0), "Q", font = conn_font, fill = 0)
         else:
@@ -115,15 +108,14 @@ def main():
         time_draw.text((0, 0), time.strftime('%H:%M'), font = datetime_font, fill = 0)
         date_draw.text((0, 0), time.strftime('%d/%m'), font = datetime_font, fill = 0)
         info_draw.text((0, 6), ipaddr, font=info_font, fill=0)
-        temp_draw.text((0, 0), m_broadcast, font=temp_font, fill=0)
-        rh_draw.text((0, 4), m_rh, font=rh_font, fill=0)
-        aqi_draw.text((0, 4), m_cmd, font=aqi_font, fill=0)
+        mesg_draw.text((0, 0), m_broadcast, font=mesg_font, fill=0)
+        cmd_draw.text((0, 4), m_cmd, font=cmd_font, fill=0)
         epd.set_frame_memory(conn_image.rotate(270, expand=1), 104, 2)
         epd.set_frame_memory(time_image.rotate(270, expand=1), 104, 208)
         epd.set_frame_memory(date_image.rotate(270, expand=1), 104, 16)
         epd.set_frame_memory(info_image.rotate(270, expand=1), 8, 134)
-        epd.set_frame_memory(temp_image.rotate(270, expand=1), 72, 52)
-        epd.set_frame_memory(aqi_image.rotate(270, expand=1), 32, 92)
+        epd.set_frame_memory(mesg_image.rotate(270, expand=1), 72, 52)
+        epd.set_frame_memory(cmd_image.rotate(270, expand=1), 32, 92)
 
 
         epd.display_frame()

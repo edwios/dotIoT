@@ -47,8 +47,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-n", "--meshname", help="Name of the mesh network", default="3S11ZFCS")
 parser.add_argument("-p", "--meshpass", help="Password of the mesh network", default="096355")
 parser.add_argument("-d", "--did", help="Device to control", type=int, default=1)
-parser.add_argument("-m", "--dmac", help="MAC address of device to control")
-parser.add_argument("-c", "--choose", help="Choose from a list of device to control", action="store_true")
+parser.add_argument("-m", "--dmac", help="MAC address of the device to control")
+parser.add_argument("-c", "--choose", help="Choose from a list of devices to control", action="store_true")
 parser.add_argument("action", help="Action to turn on off device, or wait for mqtt input")
 args = parser.parse_args()
 _meshaction = args.action
@@ -79,12 +79,8 @@ class ScanDelegate(DefaultDelegate):
 	def handleDiscovery(self, dev, isNewDev, isNewData):
 		if isNewDev:
 			newdev = True
-#			print(".", end="")
-#            print("Discovered device", dev.addr)
 		elif isNewData:
 			devupdated = True
-#			print("U", end="")
-#            print("Received new data from", dev.addr)
 
 
 def foundLDSdevices():
@@ -96,9 +92,7 @@ def foundLDSdevices():
 	count = 0
 	print("Enter number in [ ] below to choose the device:")
 	for dev in devices:
-#	    print ("Device %s (%s), RSSI=%d dB" % (dev.addr, dev.addrType, dev.rssi))
 		for (adtype, desc, value) in dev.getScanData():
-#	        print ( "[%s]  %s = %s" % (adtype, desc, value))
 			if ((adtype == 9) and (value == _meshname)):
 				count += 1
 				dev.seq = count
@@ -109,7 +103,6 @@ def foundLDSdevices():
 				dev.deviceID = unpack('<i', unhexlify(sigs))[0]
 				_ldsdevices[count] = dev
 				print("[%s] MAC:%s ID:%s" % (dev.seq, dev.addr, dev.deviceID))
-#				print("Device ID is %s" % dev.deviceID)
 
 	_ndev = count
 	if _ndev > 0:
@@ -125,8 +118,6 @@ def blecallback(mesh, mesg):
 	global _psent
 
 	_gotcallback = True
-#	print("Mesh callback with: %s" % mesg)
-#	print("callback ended")
 	pass
 
 def cmd(n, command, data):
@@ -146,8 +137,8 @@ def cmd(n, command, data):
 		print("Connecting to mesh")
 		_network = dimond.dimond(0x0211, thisdevice.addr, _meshname, _meshpass, callback=blecallback)
 		tries = 0
-	# Somehow dimond disconnect after send_packet, so at the moment, has to force reconnection
-	#	_btconnected = False
+		# The BLE connection may not always happen on a Raspberry Pi due to the hardware limitation
+		# Therefore, let's give it a few chances
 		while (not _btconnected) and (tries < 5):
 			try:
 				_network.connect()
@@ -161,23 +152,20 @@ def cmd(n, command, data):
 		if not _btconnected:
 			print("Cannot connect to mesh!")
 			_lastmqttcmd = None
-	print("Is connected %s" % _btconnected)
 	if _btconnected:
 		print("Sending to addr %s, MAC: %s, Cmd: %s, Data: %s" % (target, thisdevice.addr, command, data))
 		_psent = False
 		_network.send_packet(target, command, data)
 		_psent = True
 
-# The callback for when the client receives a CONNACK response from the server.
+# Callback when connected successfully to the MQTT broker
 def on_connect(client, userdata, flags, rc):
 	global connected
-
 	connected = True
-#    print("Connected with result code "+str(rc))
 
 	# Subscribing in on_connect() means that if we lose the connection and
 	# reconnect then subscriptions will be renewed.
-#    client.subscribe([("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0)])
+	#    client.subscribe([("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0)])
 	client.subscribe([("sensornet/env/balcony/brightness", 0), ("sensornet/all", 0), ("sensornet/command", 0)])
 
 def on_disconnect(client, userdata, rc):
@@ -190,7 +178,7 @@ def on_disconnect(client, userdata, rc):
 def on_publish(client, userdata, result):
 	pass
 
-# The callback for when a PUBLISH message is received from the server.
+# The callback for when a PUBLISH message is received from the broker.
 def on_message(client, userdata, msg):
 	global _lx
 	global _mqttcmd
@@ -199,10 +187,8 @@ def on_message(client, userdata, msg):
 	global ON_DATA
 	global OFF_DATA
 
-#    print(msg.topic+" "+str(msg.payload))
 	if (msg.topic == "sensornet/command"):
 		_mqttcmd = str(msg.payload.decode("utf-8"))
-#        print("Recevied: %s", _mqttcmd)
 		if (_lastmqttcmd != _mqttcmd):
 			_lastmqttcmd = _mqttcmd
 			print("Recevied %s from MQTT" % _mqttcmd)
@@ -236,13 +222,14 @@ def main():
 	global ON_DATA
 	global OFF_DATA
 
+	# Instead of looking for devices everytime, let's use a cache :)
 	if os.path.exists("dbcache.p") and (not _choosefromlist):
 		print("Loading cache")
 		_ldsdevices = pickle.load(open("dbcache.p", "rb"))
 		_ndev = len(_ldsdevices)
 	else:
+		# Ahem, first time, let's do it the hard way
 		foundLDSdevices()
-		#print("%s devices found" % _ndev)
 		devn = 0
 		_meshdevid = 0
 		while (devn == 0) or (devn > _ndev) or (_meshdevid == 0):
@@ -252,6 +239,8 @@ def main():
 					_meshdevid = dev.deviceID
 	if (_meshdevid >= 0) and (_ndev > 0):
 		if (_meshaction == "on") or (_meshaction == "off"):
+			# currently only simple ON/OFF is implemented
+			# For other commands, look into the Telink manuals
 			cmd(_meshdevid, 0xd0, _data)
 		else:
 			while True:
