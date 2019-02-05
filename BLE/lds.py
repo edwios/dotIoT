@@ -23,6 +23,7 @@ from bluepy.btle import Scanner, DefaultDelegate
 from struct import unpack
 from binascii import unhexlify
 import time
+from datetime import datetime
 import pickle
 import argparse
 import paho.mqtt.client as mqtt
@@ -51,13 +52,15 @@ class ScanDelegate(DefaultDelegate):
 			devupdated = True
 
 
-def foundLDSdevices():
+def foundLDSdevices(autoconnect=False):
 	global _ldsdevices
 	global _ndev
 
+	autoconenctID = -1
 	scanner = Scanner().withDelegate(ScanDelegate())
 	devices = scanner.scan(10.0)
 	count = 0
+	maxrssi = -100
 	print("Enter number in [ ] below to choose the device:")
 	for dev in devices:
 		for (adtype, desc, value) in dev.getScanData():
@@ -70,6 +73,9 @@ def foundLDSdevices():
 				sigs = mdata[sigb:sige]+"0000"
 				dev.deviceID = unpack('<i', unhexlify(sigs))[0]
 				_ldsdevices[count] = dev
+				if dev.rssi > maxrssi:
+					maxrssi = dev.rssi
+					autoconenctID = dev.deviceID
 				print("[%s] MAC:%s ID:%s" % (dev.seq, dev.addr, dev.deviceID))
 
 	_ndev = count
@@ -78,7 +84,9 @@ def foundLDSdevices():
 			pickle.dump(_ldsdevices, open("dbcache.p", "wb"))
 		except:
 			print("Error saving presistance dbcache.p")
-	print()
+		print("%s devices found and saved. Will auto connect to device %s" % (_ndev, autoconenctID))
+		return autoconenctID
+
 
 def blecallback(mesh, mesg):
 	global _gotcallback
@@ -171,7 +179,8 @@ def main():
 	parser.add_argument("-p", "--meshpass", help="Password of the mesh network", default="096355")
 	parser.add_argument("-d", "--did", help="Device to control", type=int, default=1)
 	parser.add_argument("-c", "--choose", help="Choose from a list of devices to control", action="store_true")
-	parser.add_argument("action", help="Action to turn on off device, or wait for mqtt input")
+	parser.add_argument("-a", "--auto", help="Auto connect to mesh upon start", action="store_true", default=False)
+	parser.add_argument("action", help="on, off to turn on off device, wait to wait for mqtt input, settime to set the date time to the device")
 	args = parser.parse_args()
 	meshaction = args.action
 	if meshaction == "on":
@@ -181,6 +190,7 @@ def main():
 	_meshname = args.meshname
 	_meshpass = args.meshpass
 	_meshdevid = args.did
+	autoconnect = args.auto
 	choosefromlist = args.choose
 
 	if (_meshname == ""):
@@ -188,26 +198,33 @@ def main():
 	if (_meshpass == ""):
 		_meshpass = input("Input the mesh password [096355]: ") or "096355"
 
+	if autoconnect:
+		_meshdevid = foundLDSdevices(True)
+		if _meshdevid >= 0:
+			cmd(_meshdevid, 0xe0, [0xff, 0xff])
+		else:
+			print("Error: No auto-connectable device was found")
+	else:
+		# Instead of looking for devices everytime, let's use a cache :)
+		if os.path.exists("dbcache.p") and (not choosefromlist):
+			_ldsdevices = pickle.load(open("dbcache.p", "rb"))
+			_ndev = len(_ldsdevices)
+			print("Loaded %s devices from cache" % _ndev)
+		else:
+			# Ahem, first time, let's do it the hard way
+			foundLDSdevices(False)
+			devn = 0
+			_meshdevid = 0
+			while (devn == 0) or (devn > _ndev) or (_meshdevid == 0):
+				devn = int(input("Which device? ") or "0")
+				for dev in list(_ldsdevices.values()):
+					if dev.seq == devn:
+						_meshdevid = dev.deviceID
+
 	if (choosefromlist):
 		print("Will have device in mesh %s from below list %s" % (_meshname, args.action))
 	else:
 		print("Will have device #%s %s in mesh %s" % (_meshdevid, args.action, _meshname))
-
-	# Instead of looking for devices everytime, let's use a cache :)
-	if os.path.exists("dbcache.p") and (not choosefromlist):
-		_ldsdevices = pickle.load(open("dbcache.p", "rb"))
-		_ndev = len(_ldsdevices)
-		print("Loaded %s devices from cache" % _ndev)
-	else:
-		# Ahem, first time, let's do it the hard way
-		foundLDSdevices()
-		devn = 0
-		_meshdevid = 0
-		while (devn == 0) or (devn > _ndev) or (_meshdevid == 0):
-			devn = int(input("Which device? ") or "0")
-			for dev in list(_ldsdevices.values()):
-				if dev.seq == devn:
-					_meshdevid = dev.deviceID
 
 	client = mqtt.Client()
 	client.on_connect = on_connect
@@ -222,6 +239,13 @@ def main():
 			# currently only simple ON/OFF is implemented
 			# For other commands, look into the Telink manuals
 			cmd(_meshdevid, 0xd0, data)
+		if meshaction == "settime":
+			# Set current time to device
+			dtnow = datetime.now()
+			yh = dtnow.year // 256
+			yl = dtnow.year % 256
+			data = [yh, yl, dtnow.month, dtnow.day, dtnow.hour, dtnow.minute, dtnow.second]
+			cmd(_meshdevid, 0xe4, data)
 		else:
 			while True:
 				time.sleep(1)
