@@ -38,6 +38,8 @@ ser = serial.Serial(
 	rtscts=False
 )
 
+MQTT_HOST = "10.0.1.250"
+
 i2c_bus = smbus.SMBus(1)
 
 AO_RST_PIN = 23
@@ -73,7 +75,7 @@ def on_connect(client, userdata, flags, rc):
 
 	# Subscribing in on_connect() means that if we lose the connection and
 	# reconnect then subscriptions will be renewed.
-	client.subscribe([("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0)])
+	client.subscribe([("sensornet/env/home/living/temperature", 0), ("sensornet/env/home/living/humidity", 0), ("sensornet/command/ao", 0)])
 
 def on_disconnect(client, userdata, rc):
 	global connected
@@ -93,11 +95,11 @@ def on_message(client, userdata, msg):
 		x = str(msg.payload.decode("utf-8"))
 		if (x == 'reset'):
 			resetAO()
-	if (msg.topic == "sensornet/env/living/humidity"):
+	if (msg.topic == "sensornet/env/home/living/humidity"):
 		x = float(str(msg.payload.decode("utf-8")))
 		m_envdata_h = int(x * 512)
 		m_has_envdata_h = True
-	if (msg.topic == "sensornet/env/living/temperature"):
+	if (msg.topic == "sensornet/env/home/living/temperature"):
 		x = float(str(msg.payload.decode("utf-8")))
 		if x < -25:
 			x = -25	# sensor can only handle >= 025ºC
@@ -259,7 +261,7 @@ def main():
 	client.on_connect = on_connect
 	client.on_disconnect = on_disconnect
 	client.on_message = on_message
-	client.connect_async("10.0.1.250", 1883, 60)
+	client.connect_async(MQTT_HOST, 1883, 60)
 	initGPIO()
 	initAO()
 	resetCCS811()
@@ -278,13 +280,13 @@ def main():
 			if aodata != -1:
 				print("Got AO data from sensor: %s" % aodata)
 				# split ao data into array
-				client.publish("sensornet/env/living/ao", aodata)
+				client.publish("sensornet/env/home/living/ao", aodata)
 			if CCS811_OK:
 				(status, co2, voc) = getVOCData()
 				if (status != -1):
 					print("Got [Status: %s] CO2: %s, TVOC: %s" % (hex(status), co2, voc))
-					client.publish("sensornet/env/living/co2", co2)
-					client.publish("sensornet/env/living/voc", voc)
+					client.publish("sensornet/env/home/living/co2", co2)
+					client.publish("sensornet/env/home/living/voc", voc)
 
 
 
