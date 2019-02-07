@@ -28,6 +28,7 @@ btconnected=False
 m_temp = "0ºC"
 m_rh = "0%"
 m_aqi = "AQI: 0"
+m_co2 = "0"
 
 EvTH7271="fc:f4:35:bf:6b:37"
 EvTH9640="e3:13:83:3a:33:c8"
@@ -37,6 +38,7 @@ def main():
     global m_temp
     global m_rh
     global m_aqi
+    global m_co2
     global connected
     global btconnected
 
@@ -64,7 +66,7 @@ def main():
     info_image = Image.new('1', (112, 18), 255)  # 255: clear the frame
     temp_image = Image.new('1', (126, 48), 255)  # 255: clear the frame
     rh_image   = Image.new('1', (62, 32), 255)  # 255: clear the frame
-    aqi_image  = Image.new('1', (104, 28), 255)  # 255: clear the frame
+    aqi_image  = Image.new('1', (180, 28), 255)  # 255: clear the frame
 
     blank_draw = ImageDraw.Draw(blank_image)
     conn_draw = ImageDraw.Draw(conn_image)
@@ -98,6 +100,7 @@ def main():
             lastTime = time.monotonic()
             getEnvInfoFromBLEDevices()
             ipaddr = socket.gethostbyname(h)
+        taqi = m_aqi + "/" + m_co2
         # draw a rectangle to clear the image
         blank_draw.rectangle((0, 0, blank_image_width, blank_image_height), fill = 255)
         conn_draw.rectangle((0, 0, conn_image_width, conn_image_height), fill = 255)
@@ -116,14 +119,14 @@ def main():
         info_draw.text((0, 6), ipaddr, font=info_font, fill=0)
         temp_draw.text((0, 0), m_temp, font=temp_font, fill=0)
         rh_draw.text((0, 4), m_rh, font=rh_font, fill=0)
-        aqi_draw.text((0, 4), m_aqi, font=aqi_font, fill=0)
+        aqi_draw.text((0, 4), taqi, font=aqi_font, fill=0)
         epd.set_frame_memory(conn_image.rotate(270, expand=1), 104, 2)
         epd.set_frame_memory(time_image.rotate(270, expand=1), 104, 208)
         epd.set_frame_memory(date_image.rotate(270, expand=1), 104, 16)
         epd.set_frame_memory(info_image.rotate(270, expand=1), 8, 134)
         epd.set_frame_memory(temp_image.rotate(270, expand=1), 72, 52)
         epd.set_frame_memory(rh_image.rotate(270, expand=1), 72, 180)
-        epd.set_frame_memory(aqi_image.rotate(270, expand=1), 32, 92)
+        epd.set_frame_memory(aqi_image.rotate(270, expand=1), 32, 66)
         if btconnected:
             epd.set_frame_memory(conn_image.rotate(270, expand=1), 88, 2)
         else:
@@ -168,7 +171,7 @@ def on_connect(client, userdata, flags, rc):
 
     # Subscribing in on_connect() means that if we lose the connection and
     # reconnect then subscriptions will be renewed.
-    client.subscribe([("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0)])
+    client.subscribe([("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0), ("sensornet/env/home/living/co2", 0)])
 
 def on_disconnect(client, userdata, rc):
     global connected
@@ -231,6 +234,8 @@ def getEnvInfoFromBLEDevices():
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
     global m_aqi
+    global m_rh
+    global m_co2
 
 #    print(msg.topic+" "+str(msg.payload))
     if (msg.topic == "sensornet/env/home/living/aqi"):
@@ -238,6 +243,10 @@ def on_message(client, userdata, msg):
         m_aqi = "AQI: "+str(round(float(x)))
     if (msg.topic == "sensornet/env/home/balcony/humidity"):
         x = str(msg.payload.decode("utf-8"))
+        m_rh = str(round(float(x)))+"%"
+    if (msg.topic == "sensornet/env/home/living/co2"):
+        x = str(msg.payload.decode("utf-8"))
+        m_co2 = str(round(float(x)))
 #        m_rh = str(round(float(x)))+"%"
 
 client = mqtt.Client()
