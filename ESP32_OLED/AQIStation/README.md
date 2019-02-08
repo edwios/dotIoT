@@ -15,8 +15,14 @@ The Air Quqlity indices shown including:
 
 Download firmware for ESP32 from MicroPython: http://micropython.org/download#esp32
 
-Erase flash on ESP32: `esptool.py --port /dev/tty.SLAB_USBtoUART erase_flash`
-Flash firmware to ESP32: `esptool.py --port /dev/tty.SLAB_USBtoUART --chip esp32 write_flash -z 0x1000 esp32-2019.bin`
+Erase flash on ESP32:
+
+`esptool.py --port /dev/tty.SLAB_USBtoUART erase_flash`
+
+Flash firmware to ESP32:
+
+`esptool.py --port /dev/tty.SLAB_USBtoUART --chip esp32 write_flash -z 0x1000 esp32-2019.bin`
+
 
 **Install ampy**
 
@@ -24,9 +30,11 @@ Install the Ada-Fruit AMPY utility. You will need this to manage those python fi
 
 `sudo pip3 install adafruit-ampy`
 
+
 **Install to ESP32**
 
 * Modify `boot.py` and replace <SSID_NAME> and <SSID_PASS> with your Wi-Fi base stsation's name and WiFi password. Then copy all files onto the ESP using `ampy put <file>`. E.g.
+
 
 	```
 	ampy put font6.py
@@ -38,6 +46,7 @@ Install the Ada-Fruit AMPY utility. You will need this to manage those python fi
 	ampy put boot.py
 	ampy put main.py
 	```
+
 
 Notes
 -----
