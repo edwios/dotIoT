@@ -28,7 +28,7 @@ import gc
 gc.collect()
 
 SSID = "<SSID_Name>"
-PSWD = "<SSID_Password>"
+PSWD = "<SSID_PASS>"
 MQTT_HOST = "10.0.1.250"
 
 print("Starting")
