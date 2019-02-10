@@ -37,8 +37,8 @@ m_period = 3
 m_luxth = 500
 dotIoTDevices = []
 
-#dotIoTDevices = [{"name":"EnvMultiIR9070", "addr":"FD:CA:60:13:52:9E"}, {"name":"EvTH7271", "addr":"fc:f4:35:bf:6b:37"},{"name":"EvTH9640", "addr":"e3:13:83:3a:33:c8"},{"name":"EnvMultiUV0980", "addr":"e7:7c:12:1f:73:24"}]
-default_dotIoTDevices = [{"name":"EvTH2618", "addr":"FF:28:58:4C:90:0A"}]
+default_dotIoTDevices = [{"name":"EnvMultiIR9070", "addr":"FD:CA:60:13:52:9E"}, {"name":"EvTH7271", "addr":"fc:f4:35:bf:6b:37"},{"name":"EvTH9640", "addr":"e3:13:83:3a:33:c8"},{"name":"EnvMultiUV0980", "addr":"e7:7c:12:1f:73:24"}]
+#default_dotIoTDevices = [{"name":"EvTH2618", "addr":"FF:28:58:4C:90:0A"}]
 m_mqtthub="127.0.0.1"
 
 
@@ -74,6 +74,7 @@ def main():
     global m_period
     global m_luxth
     global m_mqtthub
+    global dotIoTDevices
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-P", "--period", type=int, help="Period of each poll", default=5)
@@ -179,15 +180,27 @@ def getEnvInfoFromBLEDevices(iotdevice):
             prUUIDVal = btle.UUID("2a6d")
             lxUUIDVal = btle.UUID("815b")
 # To get value from char with endian, use int.from.bytes():
-#            devchar = envTHSvc.getCharacteristics(tempUUIDVal)[0]
-#            tempVal = int.from_bytes(devchar.read(), byteorder='little', signed=True)
+            devchar = envTHSvc.getCharacteristics(tempUUIDVal)[0]
+            if devchar != None:
+                tempVal = int.from_bytes(devchar.read(), byteorder='little', signed=True)
+                m_temp = float(tempVal)/100.0
+            devchar = envTHSvc.getCharacteristics(rhUUIDVal)[0]
+            if devchar != None:
+                rhVal = int.from_bytes(devchar.read(), byteorder='little', signed=True)
+                m_rh = float(rhVal)/100.0
+            devchar = envTHSvc.getCharacteristics(prUUIDVal)[0]
+            if devchar != None:
+                prVal = int.from_bytes(devchar.read(), byteorder='little', signed=True)
+
             devchar = envTHSvc.getCharacteristics(lxUUIDVal)[0]
-            # A 2 second delay is essential for EvTH2618 to get the Lux reading
-            # If not, the reading will stuck to one unchanging value
-            time.sleep(2)
-            lxVal = int.from_bytes(devchar.read(), byteorder='little', signed=False)
+            if devchar != None:
+                # A 2 second delay is essential for EvTH2618 to get the Lux reading
+                # If not, the reading will stuck to one unchanging value
+                time.sleep(2)
+                lxVal = int.from_bytes(devchar.read(), byteorder='little', signed=False)
+                m_lx = str(lxVal)
+
             gotdata = True
-            m_lx = str(lxVal)
             print("%s,%s,%s,ºC,%s,%%,%s,bar,%s,lux" % (time.strftime('%F %H:%M'),iotdevice["name"],m_temp,m_rh,m_pr,m_lx))
         if retry >= 4:
             m_lx = 0
