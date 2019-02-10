@@ -26,6 +26,18 @@ import smbus
 import argparse
 import subprocess
 
+# Maximum allowed errors reading from all sensors
+MAXFAILS = 3
+
+# Default measurement interval 30 seconds (exec without option -t)
+m_periood = 30
+
+# IP of MQTT broker
+MQTT_HOST = "10.0.1.250"
+
+#
+# No user servicible parts below
+
 ser = serial.Serial(            
 	port='/dev/serial0',
 	baudrate = 9600,
@@ -38,18 +50,16 @@ ser = serial.Serial(
 	rtscts=False
 )
 
-MQTT_HOST = "10.0.1.250"
-
 i2c_bus = smbus.SMBus(1)
 
+# GPIOO pins def for sensor connections
 AO_RST_PIN = 23
 CCS811_I2C_ADDR = 0x5a
 CCS811_WAKE_PIN = 22
 CCS811_RST_PIN = 27
-SER_TIMEOUT = 10
-m_periood = 30
 
 # CCS811 Registers
+# Details see CCS811 datasheet
 CCS811_REG_STATUS = 0x00
 CCS811_REG_MEAS_MODE = 0x01
 CCS811_REG_ALG_RESULT_DATA = 0x02
@@ -58,23 +68,28 @@ CCS811_REG_APP_START = 0xF4
 CCS811_REG_ENV_DATA = 0x05
 CCS811_REG_ERROR = 0xE0
 
+# CCS811 mode 1 - auto measure and report each 1s
+# Details see CCS811 datasheet
 CCS811_MEAS_MODE_1 = 0x10
 
+# AO UART read timeout
+SER_TIMEOUT = 10
+
+# Initialise global status
 CCS811_OK = False
 m_has_envdata_t = False
 m_has_envdata_h = False
 m_envdata_t = 0
 m_envdata_h = 0
 
-# The callback for when the client receives a CONNACK response from the server.
+# MQTT callback upon CONNACK response from broker
 def on_connect(client, userdata, flags, rc):
 	global connected
 
 	connected = True
-	print("Connected with result code "+str(rc))
+	print("INFO: Connected with result code "+str(rc))
 
-	# Subscribing in on_connect() means that if we lose the connection and
-	# reconnect then subscriptions will be renewed.
+	# Subscriptions will be renewed upon connections/re-connectios
 	client.subscribe([("sensornet/env/home/living/temperature", 0), ("sensornet/env/home/living/humidity", 0), ("sensornet/command/ao", 0)])
 
 def on_disconnect(client, userdata, rc):
@@ -82,9 +97,9 @@ def on_disconnect(client, userdata, rc):
 
 	connected = False
 	if rc != 0:
-		print("Unexpected disconnection.")
+		print("WARNING: Unexpected disconnection.")
 
-# The callback for when a PUBLISH message is received from the server.
+# MQTT Callback upon PUBLISH received
 def on_message(client, userdata, msg):
 	global m_has_envdata_t
 	global m_has_envdata_h
@@ -95,6 +110,7 @@ def on_message(client, userdata, msg):
 		x = str(msg.payload.decode("utf-8"))
 		if (x == 'reset'):
 			resetAO()
+	# Update CCS811 T&H registers for more accurate reporting
 	if (msg.topic == "sensornet/env/home/living/humidity"):
 		x = float(str(msg.payload.decode("utf-8")))
 		m_envdata_h = int(x * 512)
@@ -122,23 +138,30 @@ def read1char():
 		out = ord(out)
 	return out
 
-def ccs811_update_envdata(t=0, h=0):
+def ccs811_update_envdata():
+	global m_has_envdata_t
+	global m_has_envdata_h
+	global m_envdata_t
+	global m_envdata_h
+	global CCS811_OK
+
 	if CCS811_OK:
 		# Work if only we have BOTH T and H available
 		if (m_has_envdata_t and m_has_envdata_h):
+			print("INFO: Updating ENV_DATA with %s and %s" % (m_envdata_t, m_envdata_h))
 			m_has_envdata_h = False
 			m_has_envdata_t = False
-			th = m_envdata_t // 256
-			tl = m_envdata_t % 256
-			hh = m_envdata_h // 256
-			hl = m_envdata_h % 256
-			print("Env data: th %s, tl %s, hh %s, hl %s" % (th, tl, hh, hl))
-			i2c_bus.write_byte_data(CCS811_I2C_ADDR, CCS811_REG_ENV_DATA, [th, tl, hh, hl])
+			th = int(m_envdata_t // 256)
+			tl = int(m_envdata_t % 256)
+			hh = int(m_envdata_h // 256)
+			hl = int(m_envdata_h % 256)
+#			print("%s, th %s, tl %s, hh %s, hl %s" % (time.strftime('%F %H:%M'), th, tl, hh, hl))
+			i2c_bus.write_i2c_block_data(CCS811_I2C_ADDR, CCS811_REG_ENV_DATA, [th, tl, hh, hl])
 			status = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_STATUS)
 			if status != 0x98:
 				err_code = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_ERROR)
 				# Firmware not in app mode, i.e. app_start failed
-				print("Failed to update ENV_DATA: %s" % hex(err_code))
+				print("ERROR: Failed to update ENV_DATA: %s" % hex(err_code))
 				return False
 			return True
 	return False
@@ -168,30 +191,30 @@ def getAOData():
 def getVOCData():
 	try:
 		status = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_STATUS)
-		while status != 0x98:
+		# Todo: Add timeout
+		lt = time.monotonic()	
+		while (time.monotonic() - lt < SER_TIMEOUT) and (status != 0x98):
 			err_code = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_ERROR)
 			time.sleep(0.01)
 			status = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_STATUS)
-		vocdata = i2c_bus.read_i2c_block_data(CCS811_I2C_ADDR, CCS811_REG_ALG_RESULT_DATA, 8)
-		status = vocdata[4]
 		if status == 0x98:
-			co2h = vocdata[0] & 0x7f
-			co2l = vocdata[1]
-#			print("Debug: co2h %s, co2l %s" % (hex(co2h), hex(co2l)))
-			voch = vocdata[2] & 0x7f
-			vocl = vocdata[3]
-			err = vocdata[5]
-			if status & 0x01 == 1:
-				err = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_ERROR)
-				print("getVOCData Error %s" % hex(err))
-			co2 = co2h*256+co2l
-			voc = voch*256+vocl
-			return (status, co2, voc)
+			vocdata = i2c_bus.read_i2c_block_data(CCS811_I2C_ADDR, CCS811_REG_ALG_RESULT_DATA, 8)
+			status = vocdata[4]
+			if status == 0x98:
+				co2h = vocdata[0] & 0x7f
+				co2l = vocdata[1]
+				voch = vocdata[2] & 0x7f
+				vocl = vocdata[3]
+				err = vocdata[5]
+				co2 = co2h*256+co2l
+				voc = voch*256+vocl
+				return (status, co2, voc)
+			else:
+				err_code = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_ERROR)
+				# Firmware not in app mode, i.e. app_start failed
+				print("ERROR: Failed to get data from VOC: %s" % hex(err_code))
 		else:
-			err_code = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_ERROR)
-			# Firmware not in app mode, i.e. app_start failed
-			print("Failed to get data from VOC: %s" % hex(err_code))
-
+			print("FATAL: CCS811 keep reporting error for %s seconds" % SER_TIMEOUT)
 	except:
 		pass
 	return (-1, 0, 0)
@@ -202,18 +225,18 @@ def initCCS811():
 	time.sleep(0.01) # wait 1ms
 	hwid = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_HW_ID)
 	if (hwid != 0x81):
-		print("Cannot find CCS811, incorrect hwid %s" % hex(hwid))
+		print("FATAL: Cannot find CCS811, incorrect hwid %s" % hex(hwid))
 		return False
 	status = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_STATUS)
 	if status & 0x10 == 0:
-		print("CCS811 did not have valid app")
+		print("FATAL: CCS811 did not have valid app")
 		return False
 	# Issue APP_START to CCS811
 	#i2c_bus.write_byte_data(CCS811_I2C_ADDR, CCS811_REG_APP_START, 0)
 	try:
 		subprocess.run(["/usr/sbin/i2cset", "-y", "1", str(CCS811_I2C_ADDR), str(CCS811_REG_APP_START)])
 	except:
-		print("Cannot execute i2cset, make sure i2ctools are installed (apt-get install -y i2c-tools)")
+		print("FATAL: Cannot execute i2cset, make sure i2ctools are installed (apt-get install -y i2c-tools)")
 		return False
 	time.sleep(0.02)
 	# Important: Must set measurement mode otherwise chip won't work, status reg read will fail!!
@@ -222,12 +245,13 @@ def initCCS811():
 	if status & 0x90 == 0:
 		# Firmware not in app mode, i.e. app_start failed
 		err_code = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_ERROR)
-		print("CCS811 did not start up succefully: %s" % hex(err_code))
+		print("FATAL: CCS811 did not start up succefully: %s" % hex(err_code))
 		return False
 	return True
 
 def initAO():
-	pass
+	resetAO()
+	
 
 def resetCCS811():
 	GPIO.output(CCS811_RST_PIN, 0)
@@ -239,6 +263,7 @@ def resetAO():
 	GPIO.output(AO_RST_PIN, 0)
 	time.sleep(0.2)
 	GPIO.output(AO_RST_PIN, 1)
+	time.sleep(0.1)
 
 def initGPIO():
 	GPIO.setwarnings(False)
@@ -250,7 +275,11 @@ def initGPIO():
 	GPIO.output(CCS811_RST_PIN, 1)
 
 def main():
+	global CCS811_OK
+
 	aodata = ""
+	aofailc = 0
+	vocfailc = 0
 
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-t", "--period", help="Measurement period in seconds. Default 30s", type=int, default=30)
@@ -278,15 +307,30 @@ def main():
 			aodata = getAOData()
 			ccs811_update_envdata()
 			if aodata != -1:
-				print("Got AO data from sensor: %s" % aodata)
+				aofailc = 0
 				# split ao data into array
 				client.publish("sensornet/env/home/living/ao", aodata)
+			else:
+				aofailc += 1
 			if CCS811_OK:
 				(status, co2, voc) = getVOCData()
 				if (status != -1):
-					print("Got [Status: %s] CO2: %s, TVOC: %s" % (hex(status), co2, voc))
+					vocfailc = 0
+#					print("Got [Status: %s] CO2: %s, TVOC: %s" % (hex(status), co2, voc))
 					client.publish("sensornet/env/home/living/co2", co2)
 					client.publish("sensornet/env/home/living/voc", voc)
+					print("%s, %s, %s, %s" % (time.strftime('%F %H:%M'), co2, voc, aodata))
+				else:
+					vocfailc += 1
+			if aofailc > MAXFAILS:
+				aofailc = 0
+				resetAO()
+				initAO()
+			if vocfailc > MAXFAILS:
+				vocfailc = 0
+				resetCCS811()
+				CCS811_OK = initCCS811()
+
 
 
 
