@@ -45,21 +45,40 @@ m_basetopic = "sensornet/env/home/"
 default_dotIoTDevices = {
     "EnvMultiIR9070":
     {
-        "2a77":"0,mobile/lux"
+        "srvc":
+        {
+            "181a":
+            {
+                "2a77":"0,mobile/lux"
+            }
+        }
     },
     "EvTH1206":
     {
-        "2a6e":"2,living/temperature",
-        "2a6f":"2,living/humidity",
-        "2a6d":"0,living/pressure",
+        "srvc":
+        {
+            "181a":
+            {
+                "2a6e":"2,living/temperature",
+                "2a6f":"2,living/humidity",
+                "2a6d":"0,living/pressure",
+            }
+        },
         "addr":"C2:D6:9B:AB:8C:E6"
     },
     "EnvMultiUV0980":
     {
-        "2a6e":"2,balcony/temperature",
-        "2a6d":"2,balcony/pressure",
-        "2a77":"0,balcony/lux",
-        "2a76":"0,balcony/uvi"
+        "srvc":
+        {
+            "181a":
+            {
+                "2a6e":"2,balcony/temperature",
+                "2a6d":"0,balcony/pressure",
+                "2a77":"0,balcony/lux",
+                "2a76":"0,balcony/uvi"
+            }
+        },
+        "addr":"E7:7C:12:1F:73:24"
     }
 }
 #default_dotIoTDevices = [{"name":"EvTH2618", "addr":"FF:28:58:4C:90:0A"}]
@@ -205,40 +224,45 @@ def getEnvInfoFromBLEDevices(devname, iotdevice):
         print("DEBUG: Connected")
         # Set the MTU to bigger value if dealing with large data volume
         # devTH.setMTU(31)
-        svcuuid = btle.UUID("181a")
-        svc = devTH.getServiceByUUID(svcuuid)
-        retry = 0
         for j in iotdevice.keys():
-            if j != 'addr':
-                print("DEBUG: processing %s from %s" % (j, devname))
-                while (not gotdata) and (retry < 4):
-                    print("DEBUG: iotdevice[%s]: %s" % (j, iotdevice[j]))
-                    cmd = iotdevice[j]
-                    a, b = cmd.split(',')
-                    dp = int(a)
-                    topic = m_basetopic+b
-                    print("DEBUG: Obtaining values from %s for %d dp on topic %s" % (j, dp, topic))
-                    sen = btle.UUID(str(j))
-    # To get value from char with endian, use int.from.bytes():
-                    devchar = svc.getCharacteristics(sen)[0]
-                    if devchar != None:
-                        if j == "815b":
-                            # A 2 second delay is essential for EvTH2618 to get the Lux reading
-                            # If not, the reading will stuck to one unchanging value
-                            time.sleep(2)
-                        t = int.from_bytes(devchar.read(), byteorder='little', signed=True)
-                        if dp > 0:
-                            charvalue = float(t)/(10**dp)
-                        else:
-                            charvalue = t
-                        gotdata = True
-                        print("DEBUG: publishing %s with %s" % (topic, charvalue))
-                        m_client.publish(topic, charvalue)
-                    else:
-                        print("ERROR: Cannot oobtain char %s on device %s" % (j, devname))
-                gotdata = False
-                if retry >= 4:
-                    print("ERROR: Cannot get data from device %s" % devname)
+            if j == "srvc":
+                print("DEBUG: processing all %s from %s" % (j, devname))
+                for k in iotdevice[j].keys():
+                    print("DEBUG: processing service %s from %s" % (k, devname))
+                    svcuuid = btle.UUID(k)
+                    svc = devTH.getServiceByUUID(svcuuid)
+                    print("DEBUG: iotdevice[%s][%s]: %s" % (j, k, iotdevice[j][k]))
+                    chars = iotdevice[j][k]
+                    for char in chars.keys():
+                        cmd = chars[char]
+                        a, b = cmd.split(',')
+                        dp = int(a)
+                        topic = m_basetopic+b
+                        print("DEBUG: Obtaining values from %s for %d dp on topic %s" % (char, dp, topic))
+                        sen = btle.UUID(str(char))
+                        retry = 0
+                        while (not gotdata) and (retry < 4):
+        # To get value from char with endian, use int.from.bytes():
+                            devchar = svc.getCharacteristics(sen)[0]
+                            if devchar != None:
+                                if k == "815b":
+                                    # A 2 second delay is essential for EvTH2618 to get the Lux reading
+                                    # If not, the reading will stuck to one unchanging value
+                                    time.sleep(2)
+                                t = int.from_bytes(devchar.read(), byteorder='little', signed=True)
+                                if dp > 0:
+                                    charvalue = float(t)/(10**dp)
+                                else:
+                                    charvalue = t
+                                gotdata = True
+                                print("DEBUG: publishing %s with %s" % (topic, charvalue))
+                                m_client.publish(topic, charvalue)
+                            else:
+                                retry += 1
+                                print("ERROR: Cannot oobtain char %s on device %s" % (j, devname))
+                        gotdata = False
+                        if retry >= 4:
+                            print("ERROR: Cannot get data from device %s" % devname)
 #            print("%s,%s,%s,ºC,%s,%%,%s,bar,%s,lux" % (time.strftime('%F %H:%M'),iotdevice["name"],m_temp,m_rh,m_pr,m_lx))
         devTH.disconnect()
 
