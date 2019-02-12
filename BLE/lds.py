@@ -30,6 +30,7 @@ import paho.mqtt.client as mqtt
 import os.path
 
 _ldsdevices = {}
+_acdevice = None
 _network = None
 _ndev = 0
 _gotcallback = False
@@ -61,7 +62,8 @@ def foundLDSdevices(autoconnect=False):
 	devices = scanner.scan(10.0)
 	count = 0
 	maxrssi = -100
-	print("Enter number in [ ] below to choose the device:")
+	if not autoconnect:
+		print("Enter number in [ ] below to choose the device:")
 	for dev in devices:
 		for (adtype, desc, value) in dev.getScanData():
 			if ((adtype == 9) and (value == _meshname)):
@@ -76,7 +78,7 @@ def foundLDSdevices(autoconnect=False):
 				if dev.rssi > maxrssi:
 					maxrssi = dev.rssi
 					autoconenctID = dev.deviceID
-				print("[%s] MAC:%s ID:%s" % (dev.seq, dev.addr, dev.deviceID))
+				print("[%s] MAC:%s RSSI: %s ID:%s" % (dev.seq, dev.addr, dev.rssi, dev.deviceID))
 
 	_ndev = count
 	if _ndev > 0:
@@ -94,19 +96,23 @@ def blecallback(mesh, mesg):
 	_gotcallback = True
 	pass
 
-def cmd(n, command, data):
+def cmd(n, ac, command, data):
 	global _network
 	global _psent
 	global _btconnected
 
 	for dev in list(_ldsdevices.values()):
 		if dev.deviceID == n:
-			thisdevice = dev
-			break
-	target = thisdevice.deviceID
+#			print("Found target device")
+			targetdevice = dev
+		if dev.deviceID == ac:
+#			print("Found autoconenct device")
+			connectdevice = dev
+	target = targetdevice.deviceID
 	if not _btconnected:
-		print("Connecting to mesh %s (%s) via device %s" % (_meshname, _meshpass, thisdevice.addr))
-		_network = dimond.dimond(0x0211, thisdevice.addr, _meshname, _meshpass, callback=blecallback)
+		print("Connecting to mesh %s (%s) via device %s" % (_meshname, _meshpass, targetdevice.addr))
+		if _network == None:
+			_network = dimond.dimond(0x0211, connectdevice.addr, _meshname, _meshpass, callback=blecallback)
 		tries = 0
 		# The BLE connection may not always happen on a Raspberry Pi due to the hardware limitation
 		# Therefore, let's give it a few chances
@@ -117,14 +123,14 @@ def cmd(n, command, data):
 				print("Connected to mesh")
 			except:
 				tries += 1
-				print("Reconnecting attempt %s" % tries)
+				print("Reconnecting attempt %d" % tries)
 				_btconnected = False
 				time.sleep(2)
 		if not _btconnected:
 			print("Cannot connect to mesh!")
 			_lastmqttcmd = None
 	if _btconnected:
-		print("Sending to addr %s, MAC: %s, Cmd: %s, Data: %s" % (target, thisdevice.addr, command, data))
+		print("Sending to addr %s, MAC: %s, Cmd: %s, Data: %s" % (target, connectdevice.addr, command, data))
 		_psent = False
 		_network.send_packet(target, command, data)
 		_psent = True
@@ -151,6 +157,8 @@ def on_publish(client, userdata, result):
 # The callback for when a PUBLISH message is received from the broker.
 def on_message(client, userdata, msg):
 	global _lastmqttcmd
+	global _acdevice
+	global _meshdevid
 
 	if (msg.topic == "sensornet/command"):
 		mqttcmd = str(msg.payload.decode("utf-8"))
@@ -158,9 +166,9 @@ def on_message(client, userdata, msg):
 			_lastmqttcmd = mqttcmd
 			print("Recevied %s from MQTT" % mqttcmd)
 			if (mqttcmd == "on"):
-				cmd(_meshdevid, 0xd0, ON_DATA)
+				cmd(_meshdevid, _acdevice, 0xd0, ON_DATA)
 			if (mqttcmd == "off"):
-				cmd(_meshdevid, 0xd0, OFF_DATA)
+				cmd(_meshdevid, _acdevice, 0xd0, OFF_DATA)
 			if (mqttcmd == "disconnect"):
 				if _btconnected:
 					_network.disconnect()
@@ -173,6 +181,7 @@ def main():
 	global _ldsdevices
 	global _meshname
 	global _meshpass
+	global _acdevice
 
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-n", "--meshname", help="Name of the mesh network", default="3S11ZFCS")
@@ -199,9 +208,9 @@ def main():
 		_meshpass = input("Input the mesh password [096355]: ") or "096355"
 
 	if autoconnect:
-		_meshdevid = foundLDSdevices(True)
-		if _meshdevid >= 0:
-			cmd(_meshdevid, 0xe0, [0xff, 0xff])
+		_acdevice = foundLDSdevices(autoconnect)
+		if _acdevice >= 0:
+			cmd(_acdevice, _acdevice, 0xe0, [0xff, 0xff])
 		else:
 			print("Error: No auto-connectable device was found")
 	else:
@@ -212,7 +221,7 @@ def main():
 			print("Loaded %s devices from cache" % _ndev)
 		else:
 			# Ahem, first time, let's do it the hard way
-			foundLDSdevices(False)
+			foundLDSdevices(autoconnect)
 			devn = 0
 			_meshdevid = 0
 			while (devn == 0) or (devn > _ndev) or (_meshdevid == 0):
@@ -220,6 +229,7 @@ def main():
 				for dev in list(_ldsdevices.values()):
 					if dev.seq == devn:
 						_meshdevid = dev.deviceID
+		_acdevice = _meshdevid
 
 	if (choosefromlist):
 		print("Will have device in mesh %s from below list %s" % (_meshname, args.action))
@@ -238,14 +248,14 @@ def main():
 		if (meshaction == "on") or (meshaction == "off"):
 			# currently only simple ON/OFF is implemented
 			# For other commands, look into the Telink manuals
-			cmd(_meshdevid, 0xd0, data)
+			cmd(_meshdevid, _acdevice, 0xd0, data)
 		if meshaction == "settime":
 			# Set current time to device
 			dtnow = datetime.now()
 			yh = dtnow.year // 256
 			yl = dtnow.year % 256
 			data = [yh, yl, dtnow.month, dtnow.day, dtnow.hour, dtnow.minute, dtnow.second]
-			cmd(_meshdevid, 0xe4, data)
+			cmd(_meshdevid, _acdevice, 0xe4, data)
 		else:
 			while True:
 				time.sleep(1)
