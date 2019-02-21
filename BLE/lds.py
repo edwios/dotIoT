@@ -78,21 +78,22 @@ def foundLDSdevices(autoconnect=False):
 				if dev.rssi > maxrssi:
 					maxrssi = dev.rssi
 					autoconenctID = dev.deviceID
-				print("[%s] MAC:%s RSSI: %s ID:%s" % (dev.seq, dev.addr, dev.rssi, dev.deviceID))
+				print("%s DEBUG: [%s] MAC:%s RSSI: %s ID:%s" % (time.strftime('%F %H:%M'), dev.seq, dev.addr, dev.rssi, dev.deviceID))
 
 	_ndev = count
 	if _ndev > 0:
 		try:
 			pickle.dump(_ldsdevices, open("dbcache.p", "wb"))
 		except:
-			print("Error saving presistance dbcache.p")
-		print("%s devices found and saved. Will auto connect to device %s" % (_ndev, autoconenctID))
+			print("%s ERROR: Cannot save presistance dbcache.p" % time.strftime('%F %H:%M'))
+		print("%s DEBUG: %s devices found and saved. Will auto connect to device %s" % (time.strftime('%F %H:%M'), _ndev, autoconenctID))
 		return autoconenctID
 
 
 def blecallback(mesh, mesg):
 	global _gotcallback
 
+	print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M'), mesg))
 	_gotcallback = True
 	pass
 
@@ -101,6 +102,9 @@ def cmd(n, ac, command, data):
 	global _psent
 	global _btconnected
 
+	targetdevice = None
+	connectdevice = None
+	n = int(n)
 	for dev in list(_ldsdevices.values()):
 		if dev.deviceID == n:
 #			print("Found target device")
@@ -108,9 +112,15 @@ def cmd(n, ac, command, data):
 		if dev.deviceID == ac:
 #			print("Found autoconenct device")
 			connectdevice = dev
-	target = targetdevice.deviceID
+	if n > 0:
+		if (targetdevice == None) or (connectdevice == None):
+#			print("Missing either target: %s or ac: %s" % (n, ac))
+			return None
+		target = targetdevice.deviceID
+	else:
+		target = 0
 	if not _btconnected:
-		print("Connecting to mesh %s (%s) via device %s" % (_meshname, _meshpass, targetdevice.addr))
+		print("%s INFO: Connecting to mesh %s (%s) via device %s" % (time.strftime('%F %H:%M'), _meshname, _meshpass, targetdevice.addr))
 		if _network == None:
 			_network = dimond.dimond(0x0211, connectdevice.addr, _meshname, _meshpass, callback=blecallback)
 		tries = 0
@@ -120,17 +130,17 @@ def cmd(n, ac, command, data):
 			try:
 				_network.connect()
 				_btconnected = True
-				print("Connected to mesh")
+				print("%s INFO: Connected to mesh" % time.strftime('%F %H:%M'))
 			except:
 				tries += 1
-				print("Reconnecting attempt %d" % tries)
+#				print("Reconnecting attempt %d" % tries)
 				_btconnected = False
 				time.sleep(2)
 		if not _btconnected:
-			print("Cannot connect to mesh!")
+			print("%s ERROR: Cannot connect to mesh!" % time.strftime('%F %H:%M'))
 			_lastmqttcmd = None
 	if _btconnected:
-		print("Sending to addr %s, MAC: %s, Cmd: %s, Data: %s" % (target, connectdevice.addr, command, data))
+		print("%s DEBUG: Sending to addr %s, MAC: %s, Cmd: %s, Data: %s" % (time.strftime('%F %H:%M'), target, connectdevice.addr, command, data))
 		_psent = False
 		_network.send_packet(target, command, data)
 		_psent = True
@@ -149,7 +159,7 @@ def on_disconnect(client, userdata, rc):
 	global connected
 	connected = False
 	if rc != 0:
-		print("Unexpected disconnection.")
+		print("%s INFO: MQTT broker disconnected, will not try agian" % time.strftime('%F %H:%M'))
 
 def on_publish(client, userdata, result):
 	pass
@@ -158,21 +168,32 @@ def on_publish(client, userdata, result):
 def on_message(client, userdata, msg):
 	global _lastmqttcmd
 	global _acdevice
-	global _meshdevid
 
 	if (msg.topic == "sensornet/command"):
 		mqttcmd = str(msg.payload.decode("utf-8"))
 		if (_lastmqttcmd != mqttcmd):
 			_lastmqttcmd = mqttcmd
-			print("Recevied %s from MQTT" % mqttcmd)
-			if (mqttcmd == "on"):
-				cmd(_meshdevid, _acdevice, 0xd0, ON_DATA)
-			if (mqttcmd == "off"):
-				cmd(_meshdevid, _acdevice, 0xd0, OFF_DATA)
-			if (mqttcmd == "disconnect"):
+			did, hcmd = mqttcmd.split('/')
+			did = int(did)
+			print("%s DEBUG: Recevied %s from MQTT > device: %s, cmd: %s" % (time.strftime('%F %H:%M'), mqttcmd, did, hcmd))
+			if (hcmd == "on"):
+				cmd(did, _acdevice, 0xd0, ON_DATA)
+			if (hcmd == "off"):
+				cmd(did, _acdevice, 0xd0, OFF_DATA)
+			if (hcmd == "disconnect"):
 				if _btconnected:
 					_network.disconnect()
 					_btconnected = False
+			if (hcmd == "settime"):
+				settime(did)
+
+def settime(did):
+	# Set current time to device
+	dtnow = datetime.now()
+	yh = dtnow.year // 256
+	yl = dtnow.year % 256
+	data = [yh, yl, dtnow.month, dtnow.day, dtnow.hour, dtnow.minute, dtnow.second]
+	cmd(did, _acdevice, 0xe4, data)
 
 
 def main():
@@ -212,13 +233,13 @@ def main():
 		if _acdevice >= 0:
 			cmd(_acdevice, _acdevice, 0xe0, [0xff, 0xff])
 		else:
-			print("Error: No auto-connectable device was found")
+			print("%s ERROR: No auto-connectable device was found" % time.strftime('%F %H:%M'))
 	else:
 		# Instead of looking for devices everytime, let's use a cache :)
 		if os.path.exists("dbcache.p") and (not choosefromlist):
 			_ldsdevices = pickle.load(open("dbcache.p", "rb"))
 			_ndev = len(_ldsdevices)
-			print("Loaded %s devices from cache" % _ndev)
+			print("%s DEBUG: Loaded %s devices from cache" % (time.strftime('%F %H:%M'), _ndev))
 		else:
 			# Ahem, first time, let's do it the hard way
 			foundLDSdevices(autoconnect)
@@ -232,9 +253,9 @@ def main():
 		_acdevice = _meshdevid
 
 	if (choosefromlist):
-		print("Will have device in mesh %s from below list %s" % (_meshname, args.action))
+		print("%s INFO: Will have device in mesh %s from below list to %s" % (time.strftime('%F %H:%M'), _meshname, args.action))
 	else:
-		print("Will have device #%s %s in mesh %s" % (_meshdevid, args.action, _meshname))
+		print("%s INFO: Will have device #%s in mesh %s to %s" % (time.strftime('%F %H:%M'), _meshdevid, _meshname, args.action))
 
 	client = mqtt.Client()
 	client.on_connect = on_connect
@@ -250,12 +271,7 @@ def main():
 			# For other commands, look into the Telink manuals
 			cmd(_meshdevid, _acdevice, 0xd0, data)
 		if meshaction == "settime":
-			# Set current time to device
-			dtnow = datetime.now()
-			yh = dtnow.year // 256
-			yl = dtnow.year % 256
-			data = [yh, yl, dtnow.month, dtnow.day, dtnow.hour, dtnow.minute, dtnow.second]
-			cmd(_meshdevid, _acdevice, 0xe4, data)
+			settime(_meshdevid)
 		else:
 			while True:
 				time.sleep(1)
