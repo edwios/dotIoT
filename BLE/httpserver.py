@@ -26,29 +26,26 @@ import time
 HOST_NAME = 'localhost'
 PORT_NUMBER = 80
 CMDEXE = 'lds.py'
+MQTT_TOPIC_CMD = "sensornet/command"
 
 _mqtthub = "127.0.0.1"
 connected = False
 
 async def HttpHandler(request):
 		_lasthttpcmd = request.app['_lasthttpcmd']
+		_lastdid = request.app['_lastdid']
 		mqttclient = request.app['mqttclient']
-		_httpcmd = None
 
 		cmd = request.match_info.get('cmd', "off")
-		if cmd == "on":
-			print("Received on from HTTP")
-			_httpcmd = "on"
-		if cmd == "off":
-			print("Received off from HTTP")
-			_httpcmd = "off"
-		if (_lasthttpcmd != _httpcmd):
-			request.app['_lasthttpcmd'] = _httpcmd
-			print("Recevied %s from HTTP" % _httpcmd)
-			if (_httpcmd == "on"):
-				mqttclient.publish("sensornet/command", "on")
-			if (_httpcmd == "off"):
-				mqttclient.publish("sensornet/command", "off")
+		did = request.match_info.get('did', "1")
+		did = str(int(did))
+		print("Received %s from HTTP for device %s" % (cmd, did))
+		if ((_lasthttpcmd != cmd) or (_lastdid != did)):	# skipping repeated commands
+			request.app['_lasthttpcmd'] = cmd
+			request.app['_lastdid'] = did
+			mqtt_msg = did + "/" + cmd
+			print("Sending MQTT message %s to %s" % (MQTT_TOPIC_CMD, mqtt_msg))
+			mqttclient.publish(MQTT_TOPIC_CMD, mqtt_msg)
 		data = {'status': 'OK'}
 		return web.json_response(data)
 
@@ -75,7 +72,8 @@ client.loop_start() #start loop to process received messages
 print("mqtt started")
 app = web.Application()
 app['_lasthttpcmd'] = ""
+app['_lastdid'] = ""
 app['mqttclient'] = client
-app.add_routes([web.get('/cmd/{cmd}', HttpHandler)])
+app.add_routes([web.get('/cmd/{did}/{cmd}', HttpHandler)])
 print(time.asctime(), 'Server Starts - %s:%s' % (HOST_NAME, PORT_NUMBER))
 web.run_app(app, port=PORT_NUMBER)
