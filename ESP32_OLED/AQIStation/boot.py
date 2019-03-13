@@ -14,6 +14,7 @@ import network
 import machine as m
 import time
 import ssd1306
+import sgp30
 from umqttsimple import MQTTClient
 import ubinascii
 import micropython

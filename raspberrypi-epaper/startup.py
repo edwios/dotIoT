@@ -72,7 +72,7 @@ def main():
     date_image = Image.new('1', (64, 16), 255)  # 255: clear the frame
     info_image = Image.new('1', (112, 18), 255)  # 255: clear the frame
     mesg_image = Image.new('1', (200, 32), 255)  # 255: clear the frame
-    cmd_image  = Image.new('1', (104, 28), 255)  # 255: clear the frame
+    cmd_image  = Image.new('1', (120, 28), 255)  # 255: clear the frame
 
     blank_draw = ImageDraw.Draw(blank_image)
     conn_draw = ImageDraw.Draw(conn_image)
