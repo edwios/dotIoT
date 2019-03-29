@@ -98,7 +98,7 @@ def foundLDSdevices(autoconnect=False):
 def blecallback(mesh, mesg):
 	global _gotE1callback, _callBackCmd
 
-	print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M'), mesg))
+#	print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M'), mesg))
 	_callBackCmd = mesg[7]
 	if _callBackCmd == 0xE1:
 		_gotE1callback = True
@@ -228,7 +228,7 @@ def checkMeshConnection(acdevice, autoconnect):
 		if sendok:
 			_expectE1CallBack=True 	# Expect call back, if not, device's ded
 		else:
-			# Device's ded, let's see what's there again
+			# Device's ded, let's see what's out there again
 			_refreshmesh = True
 
 def refreshMesh(autoconnect):
