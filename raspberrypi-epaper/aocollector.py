@@ -222,7 +222,7 @@ def getVOCData():
 
 def initCCS811():
 	GPIO.output(CCS811_WAKE_PIN, 0)
-	time.sleep(0.01) # wait 1ms
+	time.sleep(0.01) # wait 10ms
 	hwid = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_HW_ID)
 	if (hwid != 0x81):
 		print("FATAL: Cannot find CCS811, incorrect hwid %s" % hex(hwid))
@@ -232,12 +232,12 @@ def initCCS811():
 		print("FATAL: CCS811 did not have valid app")
 		return False
 	# Issue APP_START to CCS811
-	#i2c_bus.write_byte_data(CCS811_I2C_ADDR, CCS811_REG_APP_START, 0)
-	try:
-		subprocess.run(["/usr/sbin/i2cset", "-y", "1", str(CCS811_I2C_ADDR), str(CCS811_REG_APP_START)])
-	except:
-		print("FATAL: Cannot execute i2cset, make sure i2ctools are installed (apt-get install -y i2c-tools)")
-		return False
+	i2c_bus.write_byte(CCS811_I2C_ADDR, CCS811_REG_APP_START)
+#	try:
+#		subprocess.run(["/usr/sbin/i2cset", "-y", "1", str(CCS811_I2C_ADDR), str(CCS811_REG_APP_START)])
+#	except:
+#		print("FATAL: Cannot execute i2cset, make sure i2ctools are installed (apt-get install -y i2c-tools)")
+#		return False
 	time.sleep(0.02)
 	# Important: Must set measurement mode otherwise chip won't work, status reg read will fail!!
 	i2c_bus.write_byte_data(CCS811_I2C_ADDR, CCS811_REG_MEAS_MODE, CCS811_MEAS_MODE_1)
@@ -255,9 +255,9 @@ def initAO():
 
 def resetCCS811():
 	GPIO.output(CCS811_RST_PIN, 0)
-	time.sleep(0.01) # wait 1ms
+	time.sleep(0.1) # wait 100ms
 	GPIO.output(CCS811_RST_PIN, 1)
-	time.sleep(0.1) # wait 20ms
+	time.sleep(0.1) # wait 100ms
 
 def resetAO():
 	GPIO.output(AO_RST_PIN, 0)
