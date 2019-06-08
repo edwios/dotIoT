@@ -22,6 +22,7 @@ from subprocess import call
 import paho.mqtt.client as mqtt
 import os.path
 import time
+import sys
 
 HOST_NAME = 'localhost'
 PORT_NUMBER = 80
@@ -30,6 +31,7 @@ MQTT_TOPIC_CMD = "sensornet/command"
 
 _mqtthub = "127.0.0.1"
 connected = False
+_speciaCmds = ["reset", "terminate", "settime"]
 
 async def HttpHandler(request):
 		_lasthttpcmd = request.app['_lasthttpcmd']
@@ -40,12 +42,15 @@ async def HttpHandler(request):
 		did = request.match_info.get('did', "1")
 		did = str(int(did))
 		print("Received %s from HTTP for device %s" % (cmd, did))
-		if ((_lasthttpcmd != cmd) or (_lastdid != did)):	# skipping repeated commands
+		if ((_lasthttpcmd != cmd) or (_lastdid != did) or (cmd in _speciaCmds)):	# skipping repeated commands
 			request.app['_lasthttpcmd'] = cmd
 			request.app['_lastdid'] = did
 			mqtt_msg = did + "/" + cmd
 			print("Sending MQTT message %s to %s" % (MQTT_TOPIC_CMD, mqtt_msg))
 			mqttclient.publish(MQTT_TOPIC_CMD, mqtt_msg)
+			if cmd == "terminate":
+				print("INFO: Received termination command, exiting.")
+				sys.exit(0)
 		data = {'status': 'OK'}
 		return web.json_response(data)
 
