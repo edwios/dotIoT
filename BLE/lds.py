@@ -28,24 +28,32 @@ import pickle
 import argparse
 import paho.mqtt.client as mqtt
 import os.path
+import sys
+import json
+
+MESHNAME = "3S11ZFCS"
+MESHPASS = "096355"
 
 _ldsdevices = {}
+_devmap = None
+_speciaCmds = ["reset", "terminate", "settime"]
 _acdevice = None
 _network = None
 _ndev = 0
 _gotE1callback = False
 _expectE1CallBack = False
 _callBackCmd = 0
-_psent = False
 _meshconnected = False
 _refreshmesh = False
 _mqtthub = "127.0.0.1"
 _lastmqttcmd = ""
 ON_DATA = [1,0,0]
 OFF_DATA = [0,0,0]
-MAXMESHCONNFAILS =3		# Max tries before we declare the mesh is not reachable from this device
+MAXMESHCONNFAILS =4		# Max tries before we declare the mesh is not reachable from this device
 MESHREFRESHPERIOD =60	# Update mesh info every minute
-CALLBACKWAIT = 10
+CALLBACKWAIT = 5		# Wait 5s for a callback before we count it missing
+SCANDURATION = 20		# Scan for BLE devices for 20s
+MINDISCRSSI = -100		# Minimum signal strength we consider the device usable for connection
 
 class ScanDelegate(DefaultDelegate):
 	def __init__(self):
@@ -61,14 +69,20 @@ class ScanDelegate(DefaultDelegate):
 def foundLDSdevices(autoconnect=False):
 	global _ldsdevices
 	global _ndev
+	global _devmap
 
 	autoconenctID = -1
 	scanner = Scanner().withDelegate(ScanDelegate())
-	devices = scanner.scan(10.0)
+	devices = scanner.scan(SCANDURATION)
 	count = 0
-	maxrssi = -100
+	maxrssi = MINDISCRSSI
 	if not autoconnect:
 		print("Enter number in [ ] below to choose the device:")
+	if os.path.exists("devmap.json"):
+		with open('devmap.json') as f:
+			_devmap = json.load(f)
+		ldevmap = len(_devmap)
+		print("Loaded % devices in map file" % ldevmap)
 	for dev in devices:
 		for (adtype, desc, value) in dev.getScanData():
 			if ((adtype == 9) and (value == _meshname)):
@@ -79,6 +93,10 @@ def foundLDSdevices(autoconnect=False):
 				sigb = sige -4
 				sigs = mdata[sigb:sige]+"0000"
 				dev.deviceID = unpack('<i', unhexlify(sigs))[0]
+				if ldevmap > 0:
+					if dev.addr in _devmap:
+						dev.attr = _devmap[dev.addr]
+						print("DEBUG: Device is called %s" % dev.attr["name"])
 				_ldsdevices[count] = dev
 				if dev.rssi > maxrssi:
 					maxrssi = dev.rssi
@@ -106,9 +124,10 @@ def blecallback(mesh, mesg):
 
 def cmd(n, ac, command, data):
 	global _network
-	global _psent
 	global _meshconnected
 	global _refreshmesh
+
+	psent = False
 
 	if n<0:
 		return	# N<0 is an error carried over from somewhere else
@@ -142,7 +161,7 @@ def cmd(n, ac, command, data):
 				time.sleep(2)	# We wait a bit until the 1st wave of notifications passed
 			except:
 				tries += 1
-#				print("Reconnecting attempt %d" % tries)
+				print("Reconnecting attempt %d" % tries)
 				_meshconnected = False
 				time.sleep(2)
 		if not _meshconnected:
@@ -152,13 +171,12 @@ def cmd(n, ac, command, data):
 				_refreshmesh = True
 	if _meshconnected:
 		print("%s DEBUG: Sending to addr %s, MAC: %s, Cmd: %s, Data: %s" % (time.strftime('%F %H:%M'), target, connectdevice.addr, command, data))
-		_psent = False
 		try:
 			_network.send_packet(target, command, data)
-			_psent = True
+			psent = True
 		except:
-			_psent = False
-	return _psent
+			pass
+	return psent
 
 
 # Callback when connected successfully to the MQTT broker
@@ -183,11 +201,11 @@ def on_publish(client, userdata, result):
 # The callback for when a PUBLISH message is received from the broker.
 def on_message(client, userdata, msg):
 	global _lastmqttcmd
-	global _acdevice
+	global _meshconnected, _refreshmesh
 
 	if (msg.topic == "sensornet/command"):
 		mqttcmd = str(msg.payload.decode("utf-8"))
-		if (_lastmqttcmd != mqttcmd):
+		if (_lastmqttcmd != mqttcmd) or (mqttcmd in _speciaCmds):
 			_lastmqttcmd = mqttcmd
 			did, hcmd = mqttcmd.split('/')
 			did = int(did)
@@ -208,6 +226,16 @@ def on_message(client, userdata, msg):
 				if _meshconnected:
 					_network.disconnect()
 					_meshconnected = False
+			if (hcmd == "reset"):
+				if _meshconnected:
+					_network.disconnect()
+				_meshconnected = False
+				_refreshmesh = True
+			if (hcmd == "terminate"):
+				if _meshconnected:
+					_network.disconnect()
+				print("INFO: Received termination command, exiting.")
+				sys.exit(0)								
 			if (hcmd == "settime"):
 				settime(did)
 
@@ -223,6 +251,8 @@ def settime(did):
 def checkMeshConnection(acdevice, autoconnect):
 	global _expectE1CallBack
 	global _callBackCmd
+	global _refreshmesh
+
 	if (acdevice >= 0) and autoconnect:
 		sendok = cmd(acdevice, acdevice, 0xe0, [0xff, 0xff])
 		if sendok:
@@ -232,7 +262,8 @@ def checkMeshConnection(acdevice, autoconnect):
 			_refreshmesh = True
 
 def refreshMesh(autoconnect):
-	global _expectE1CallBack
+	global _expectE1CallBack, _refreshmesh
+
 	print("DEBUG: Refreshing mesh data")
 	acdevice = foundLDSdevices(autoconnect)
 	if (acdevice >= 0) and autoconnect:
@@ -257,10 +288,11 @@ def main():
 	global _refreshmesh
 	global _gotE1callback
 	global _expectE1CallBack
+	global MESHPASS, MESHNAME
 
 	parser = argparse.ArgumentParser()
-	parser.add_argument("-n", "--meshname", help="Name of the mesh network", default="3S11ZFCS")
-	parser.add_argument("-p", "--meshpass", help="Password of the mesh network", default="096355")
+	parser.add_argument("-N", "--meshname", help="Name of the mesh network", default=MESHNAME)
+	parser.add_argument("-P", "--meshpass", help="Password of the mesh network", default=MESHPASS)
 	parser.add_argument("-d", "--did", help="Device to control", type=int, default=1)
 	parser.add_argument("-c", "--choose", help="Choose from a list of devices to control", action="store_true")
 	parser.add_argument("-a", "--auto", help="Auto connect to mesh upon start", action="store_true", default=False)
@@ -281,6 +313,14 @@ def main():
 		_meshname = input("Input the mesh name [3S11ZFCS]: ") or "3S11ZFCS"
 	if (_meshpass == ""):
 		_meshpass = input("Input the mesh password [096355]: ") or "096355"
+
+	client = mqtt.Client()
+	client.on_connect = on_connect
+	client.on_publish = on_publish
+	client.on_disconnect = on_disconnect
+	client.on_message = on_message
+	client.connect_async(_mqtthub, 1883, 60)
+	client.loop_start() #start loop to process received messages
 
 	if autoconnect:
 		_acdevice = refreshMesh(autoconnect)
@@ -306,14 +346,6 @@ def main():
 		print("%s INFO: Will have device in mesh %s from below list to %s" % (time.strftime('%F %H:%M'), _meshname, args.action))
 	else:
 		print("%s INFO: Will have device #%s in mesh %s to %s" % (time.strftime('%F %H:%M'), _meshdevid, _meshname, args.action))
-
-	client = mqtt.Client()
-	client.on_connect = on_connect
-	client.on_publish = on_publish
-	client.on_disconnect = on_disconnect
-	client.on_message = on_message
-	client.connect_async(_mqtthub, 1883, 60)
-	client.loop_start() #start loop to process received messages
 
 	if (_meshdevid >= 0) and (_ndev > 0):
 		if (meshaction == "on") or (meshaction == "off"):
