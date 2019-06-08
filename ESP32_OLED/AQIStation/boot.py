@@ -14,7 +14,6 @@ import network
 import machine as m
 import time
 import ssd1306
-import sgp30
 from umqttsimple import MQTTClient
 import ubinascii
 import micropython
@@ -28,13 +27,16 @@ esp.osdebug(None)
 import gc
 gc.collect()
 
-SSID = "<SSID_NAME>"
-PSWD = "<SSID_PASS>"
+#SSID = "<SSID_NAME>"
+#PSWD = "<SSID_PASS>"
+SSID = "You are being watched"
+PSWD = "Akihabara"
 MQTT_HOST = "10.0.1.250"
 
 print("Starting")
 i2c = m.I2C(scl=m.Pin(4), sda=m.Pin(5))
 oled = ssd1306.SSD1306_I2C(128, 64, i2c)
+eled = m.PWM(m.Pin(12), freq=500, duty=100)
 wri_l = Writer(oled, nunito_r)
 wri_v = Writer(oled, ostrich_r)
 wri_m = Writer(oled, font6)
@@ -50,6 +52,7 @@ client_id = ubinascii.hexlify(m.unique_id())
 topic_sub_co2 = b'sensornet/env/home/living/co2'
 topic_sub_voc = b'sensornet/env/home/living/voc'
 topic_sub_aqi = b'sensornet/env/home/living/aqi'
+topic_sub_lgt = b'sensornet/light/home/balcony/lantern'
 topic_pub = b'sensornet/status'
 
 last_message = 0

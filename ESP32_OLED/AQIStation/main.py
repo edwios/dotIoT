@@ -49,6 +49,14 @@ def sub_cb(topic, msg):
     wri_v.printstring("   ")
     wri_m.set_textpos(oled, 25, 100+wri_m_len-l)  # verbose = False to suppress console output
     wri_m.printstring(str(x))
+  if topic == b'sensornet/light/home/balcony/lantern':
+    x=int(msg)
+    if x < 0:
+      x = 0
+    if x > 100:
+      x = 100
+    bgl = int(x*1023/100)
+    eled.duty(bgl)
 
   oled.show()
 
@@ -60,6 +68,7 @@ def connect_and_subscribe():
   client.subscribe(topic_sub_co2)
   client.subscribe(topic_sub_voc)
   client.subscribe(topic_sub_aqi)
+  client.subscribe(topic_sub_lgt)
   print('Connected to %s MQTT broker, subscribed to topics' % MQTT_HOST)
   return client
 
@@ -78,6 +87,8 @@ msg = b'ESP32_AQI Ready'
 client.publish(topic_pub, msg)
 oled.text('OK', 110, 56)
 oled.show()
+#eled = m.Pin(12, m.Pin.OUT)
+#eled.on()
 
 while True:
   try:
