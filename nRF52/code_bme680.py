@@ -66,13 +66,19 @@ def initLED():
 
 def onConnect(p):
 	global _btconnected
-	p.stop_advertising()
-	_btconnected = True
+	try:
+		p.stop_advertising()
+		_btconnected = True
+	except:
+		pass
 
 def onDisconnect(p):
 	global _btconnected
-	p.start_advertising()
-	_btconnected = False
+	try:
+		p.start_advertising()
+		_btconnected = False
+	except:
+		pass
 
 def getGasRef():
 	g = 0
@@ -143,14 +149,17 @@ def send_data():
 	global _btconnected
 
 	if _btconnected:
-		temp =  int(_tempf * 100)
-		chara_t.value = bytearray([temp & 0xFF, temp >> 8])
-		humi = int(_humif * 100)
-		chara_h.value = bytearray([humi & 0xFF, humi >> 8])
-		pres = int(_presf)
-		chara_p.value = bytearray([pres & 0xFF, pres >> 8])
-		gas = round(_gas)
-		chara_g.value = bytearray([gas & 0xFF, gas >> 8])
+		try:
+			temp =  int(_tempf * 100)
+			chara_t.value = bytearray([temp & 0xFF, temp >> 8])
+			humi = int(_humif * 100)
+			chara_h.value = bytearray([humi & 0xFF, humi >> 8])
+			pres = int(_presf)
+			chara_p.value = bytearray([pres & 0xFF, pres >> 8])
+			gas = round(_gas)
+			chara_g.value = bytearray([gas & 0xFF, gas >> 8])
+		except:
+			pass
 
 
 def main():
@@ -170,14 +179,21 @@ def main():
 	uuid_char_pres = bleio.UUID(UUID_CHAR_PRESSURE) # Pressure characteristic
 	uuid_char_gas = bleio.UUID(UUID_CHAR_GAS) # Gas characteristic
 
-	chara_t = bleio.Characteristic(uuid_char_temp, notify=True, read=True, write=False)
-	chara_h = bleio.Characteristic(uuid_char_humi, notify=True, read=True, write=False)
-	chara_p = bleio.Characteristic(uuid_char_pres, notify=True, read=True, write=False)
-	chara_g = bleio.Characteristic(uuid_char_gas, notify=True, read=True, write=False)
-	serv = bleio.Service(uuid_env_sense, [chara_t, chara_h, chara_p, chara_g])
-	periph = bleio.Peripheral([serv], name="BME680")
+	try:
+		chara_t = bleio.Characteristic(uuid_char_temp, notify=True, read=True, write=False)
+		chara_h = bleio.Characteristic(uuid_char_humi, notify=True, read=True, write=False)
+		chara_p = bleio.Characteristic(uuid_char_pres, notify=True, read=True, write=False)
+		chara_g = bleio.Characteristic(uuid_char_gas, notify=True, read=True, write=False)
+		serv = bleio.Service(uuid_env_sense, [chara_t, chara_h, chara_p, chara_g])
+		periph = bleio.Peripheral([serv], name="BME680")
+	except:
+		pass
 
-	periph.start_advertising()
+	try:
+		if periph is not None:
+			periph.start_advertising()
+	except:
+		pass
 
 	led_lt = time.monotonic()
 	rep_lt = led_lt
@@ -202,11 +218,14 @@ def main():
 				rep_lt = time.monotonic()
 				ledb.value = 1
 				theled = ledg
-				_tempf = float(bme680.temperature)
-				_humif = float(bme680.humidity)
-				_presf = float(bme680.pressure)
-				_gas = calcIAQ(bme680.gas)
-				_altf = float(bme680.altitude)
+				try:
+					_tempf = float(bme680.temperature)
+					_humif = float(bme680.humidity)
+					_presf = float(bme680.pressure)
+					_gas = calcIAQ(bme680.gas)
+					_altf = float(bme680.altitude)
+				except:
+					pass
 				print("\nTemperature: %0.1f C" % _tempf)
 				print("Gas: %d ohm" % _gas)
 				print("Humidity: %0.1f %%" % _humif)

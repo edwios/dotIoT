@@ -72,13 +72,19 @@ def initLED():
 
 def onConnect(p):
 	global _btconnected
-	p.stop_advertising()
-	_btconnected = True
+	try:
+		p.stop_advertising()
+		_btconnected = True
+	except:
+		pass
 
 def onDisconnect(p):
 	global _btconnected
-	p.start_advertising()
-	_btconnected = False
+	try:
+		p.start_advertising()
+		_btconnected = False
+	except:
+		pass
 
 def send_data():
 	global chara_t, chara_h, chara_p, chara_g
@@ -86,12 +92,15 @@ def send_data():
 	global _btconnected
 
 	if _btconnected:
-		temp =  int(_tempf * 100)
-		chara_t.value = bytearray([temp & 0xFF, temp >> 8])
-		humi = int(_humif * 100)
-		chara_h.value = bytearray([humi & 0xFF, humi >> 8])
-		pres = int(_presf)
-		chara_p.value = bytearray([pres & 0xFF, pres >> 8])
+		try:
+			temp =  int(_tempf * 100)
+			chara_t.value = bytearray([temp & 0xFF, temp >> 8])
+			humi = int(_humif * 100)
+			chara_h.value = bytearray([humi & 0xFF, humi >> 8])
+			pres = int(_presf)
+			chara_p.value = bytearray([pres & 0xFF, pres >> 8])
+		except:
+			pass
 
 
 def main():
@@ -110,13 +119,19 @@ def main():
 	uuid_char_humi = bleio.UUID(UUID_CHAR_HUMIDITY) # Humidity characteristic
 	uuid_char_pres = bleio.UUID(UUID_CHAR_PRESSURE) # Pressure characteristic
 
-	chara_t = bleio.Characteristic(uuid_char_temp, notify=True, read=True, write=False)
-	chara_h = bleio.Characteristic(uuid_char_humi, notify=True, read=True, write=False)
-	chara_p = bleio.Characteristic(uuid_char_pres, notify=True, read=True, write=False)
-	serv = bleio.Service(uuid_env_sense, [chara_t, chara_h, chara_p])
-	periph = bleio.Peripheral([serv], name="BME280")
+	try:
+		chara_t = bleio.Characteristic(uuid_char_temp, notify=True, read=True, write=False)
+		chara_h = bleio.Characteristic(uuid_char_humi, notify=True, read=True, write=False)
+		chara_p = bleio.Characteristic(uuid_char_pres, notify=True, read=True, write=False)
+		serv = bleio.Service(uuid_env_sense, [chara_t, chara_h, chara_p])
+		periph = bleio.Peripheral([serv], name="BME280")
+	except:
+		pass
 
-	periph.start_advertising()
+	try:
+		periph.start_advertising()
+	except:
+		pass
 
 	led_lt = time.monotonic()
 	rep_lt = led_lt
@@ -141,10 +156,13 @@ def main():
 				rep_lt = time.monotonic()
 				ledb.value = 1
 				theled = ledg
-				_tempf = float(bme280.temperature)
-				_humif = float(bme280.humidity)
-				_presf = float(bme280.pressure)
-				_altf = float(bme280.altitude)
+				try:
+					_tempf = float(bme280.temperature)
+					_humif = float(bme280.humidity)
+					_presf = float(bme280.pressure)
+					_altf = float(bme280.altitude)
+				except:
+					pass
 				print("\nTemperature: %0.1f C" % _tempf)
 				print("Humidity: %0.1f %%" % _humif)
 				print("Pressure: %0.3f hPa" % _presf)
