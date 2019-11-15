@@ -29,8 +29,8 @@ import subprocess
 # Maximum allowed errors reading from all sensors
 MAXFAILS = 3
 
-# Default measurement interval 30 seconds (exec without option -t)
-m_periood = 30
+# Default measurement interval 60 seconds (exec without option -t)
+m_periood = 60
 
 # IP of MQTT broker
 MQTT_HOST = "10.0.1.250"
@@ -222,7 +222,7 @@ def getVOCData():
 
 def initCCS811():
 	GPIO.output(CCS811_WAKE_PIN, 0)
-	time.sleep(0.01) # wait 10ms
+	time.sleep(0.001) # wait 1ms
 	hwid = i2c_bus.read_byte_data(CCS811_I2C_ADDR, CCS811_REG_HW_ID)
 	if (hwid != 0x81):
 		print("FATAL: Cannot find CCS811, incorrect hwid %s" % hex(hwid))
@@ -255,7 +255,7 @@ def initAO():
 
 def resetCCS811():
 	GPIO.output(CCS811_RST_PIN, 0)
-	time.sleep(0.1) # wait 100ms
+	time.sleep(0.01) # wait 10ms
 	GPIO.output(CCS811_RST_PIN, 1)
 	time.sleep(0.1) # wait 100ms
 
@@ -275,7 +275,7 @@ def initGPIO():
 	GPIO.output(CCS811_RST_PIN, 1)
 
 def main():
-	global CCS811_OK
+	global CCS811_OK, MQTT_HOST
 
 	aodata = ""
 	aofailc = 0
@@ -283,8 +283,10 @@ def main():
 
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-t", "--period", help="Measurement period in seconds. Default 30s", type=int, default=30)
+	parser.add_argument("--host", help="MQTT Host. Default "+MQTT_HOST, type=str, default=MQTT_HOST)
 	args = parser.parse_args()
 	m_periood = args.period
+	MQTT_HOST = args.host
 
 	client = mqtt.Client()
 	client.on_connect = on_connect
@@ -326,14 +328,10 @@ def main():
 				aofailc = 0
 				resetAO()
 				initAO()
-			if vocfailc > MAXFAILS:
-				vocfailc = 0
-				resetCCS811()
-				CCS811_OK = initCCS811()
-
-
-
-
+			# Reset CCS811 to prevent runaway
+			vocfailc = 0
+			resetCCS811()
+			CCS811_OK = initCCS811()
 
 if __name__ == '__main__':
 	main()
