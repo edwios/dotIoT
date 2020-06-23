@@ -346,7 +346,7 @@ def refreshMesh(autoconnect):
                     maxrssi = d.rssi
                     acdevice = d.deviceID
     if acdevice == -1:
-        print("%s INFO: Refreshing mesh data" % time.strftime('%F %H:%M:%S'))
+#        print("%s DEBUG: Refreshing mesh data" % time.strftime('%F %H:%M:%S'))
         acdevice = foundLDSdevices(autoconnect)
         if (acdevice >= 0) and autoconnect:
             sendok = cmd(acdevice, acdevice, 0xe0, [0xff, 0xff])
@@ -413,10 +413,10 @@ def main():
     tmpMeshPass = ""
 
     if (os.path.exists(sharedtxt)):
-        print("%s INFO: Found plain shared" % time.strftime('%F %H:%M:%S'))
+#        print("%s INFO: Found plain shared" % time.strftime('%F %H:%M:%S'))
         _devmap = json.load(open(sharedtxt))
     elif os.path.exists(sharedbin):
-        print("%s INFO: Found shared, attempt to decrypt" % time.strftime('%F %H:%M:%S'))
+#        print("%s INFO: Found shared, attempt to decrypt" % time.strftime('%F %H:%M:%S'))
         decrypted_data = decrypt_share(sharedbin, _default_passcode)
         _devmap = json.loads(decrypted_data)
 #        print("%s DEBUG: Writing decrypted file to %s" % (time.strftime('%F %H:%M:%S'), sharedtxt))
@@ -443,7 +443,7 @@ def main():
     if (_meshpass == "" and tmpMeshPass != ""):
         _meshpass = tmpMeshPass
 
-    print("%s DEBUG: Using mesh name %s and passcode %s" % (time.strftime('%F %H:%M'), _meshname, _meshpass))
+#    print("%s DEBUG: Using mesh name %s and passcode %s" % (time.strftime('%F %H:%M'), _meshname, _meshpass))
     client = mqtt.Client()
     client.on_connect = on_connect
     client.on_publish = on_publish
@@ -461,7 +461,7 @@ def main():
         if os.path.exists("dbcache.p") and (not choosefromlist) and (not refreshCache):
             _ldsdevices = pickle.load(open("dbcache.p", "rb"))
             _ndev = len(_ldsdevices)
-            print("%s DEBUG: Loaded %s devices from cache" % (time.strftime('%F %H:%M:%S'), _ndev))
+#            print("%s DEBUG: Loaded %s devices from cache" % (time.strftime('%F %H:%M:%S'), _ndev))
         else:
             # Ahem, first time, let's do it the hard way
             refreshMesh(autoconnect)
@@ -496,7 +496,7 @@ def main():
 # So we now only check and refresh upon error
                 if (time.monotonic() - lt > MESHREFRESHPERIOD):
                     lt = time.monotonic()
-                    print("%s INFO: Periodic mesh ping" % time.strftime('%F %H:%M:%S'))
+#                    print("%s DEBUG: Periodic mesh ping" % time.strftime('%F %H:%M:%S'))
                     checkMeshConnection(_acdevice, autoconnect)
                     cblt = time.monotonic()
                 if (time.monotonic() - cblt > CALLBACKWAIT) and _expectE1CallBack:
