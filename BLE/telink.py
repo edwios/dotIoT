@@ -50,41 +50,39 @@ def key_encrypt(name, password, key):
     return encrypt(key, data)
 
 def encrypt_packet(sk, address, packet):
-    print("Debug: Encrypting from ", sk, address, binascii.hexlify(bytearray(packet)))
+#    print("Debug: Encrypting from ", sk, address, binascii.hexlify(bytearray(packet)))
     auth_nonce = [address[0], address[1], address[2], address[3], 0x01, packet[0], packet[1], packet[2], 15, 0, 0, 0, 0, 0, 0, 0]
-
+    
     authenticator = encrypt(sk, auth_nonce)
-
+    
     for i in range(15):
         authenticator[i] = authenticator[i] ^ packet[i+5]
-
+    
     mac = encrypt(sk, authenticator)
 
-    cpacket = bytearray(packet)
     for i in range(2):
-        cpacket[i+3] = mac[i]
+        packet[i+3] = mac[i]
 
-    iv = [0, address[0], address[1], address[2], address[3], 0x01, cpacket[0], cpacket[1], cpacket[2], 0, 0, 0, 0, 0, 0, 0]
-
+    iv = [0, address[0], address[1], address[2], address[3], 0x01, packet[0], packet[1], packet[2], 0, 0, 0, 0, 0, 0, 0]
     temp_buffer = encrypt(sk, iv)
     for i in range(15):
-        cpacket[i+5] ^= temp_buffer[i]
+        packet[i+5] ^= temp_buffer[i]
 
-    print("Debug: Encrypted ", binascii.hexlify(apacket))
-    return cpacket
+#    print("Debug: Encrypted ", binascii.hexlify(bytearray(packet)))
+    return packet
 
 def decrypt_packet(sk, address, packet):
-    print("Debug: decrypting from ", sk, address, binascii.hexlify(bytearray(packet)))
+    print("Debug: decrypting from ", sk, address, packet, type(packet))
     iv = [address[0], address[1], address[2], packet[0], packet[1], packet[2],
           packet[3], packet[4], 0, 0, 0, 0, 0, 0, 0, 0] 
     plaintext = [0] + iv[0:15]
 
     result = encrypt(sk, plaintext)
-    apacket = bytearray(packet)
-    for i in range(len(apacket)-7):
-        apacket[i+7] ^= result[i]
-    print("Debug: Decrypted ", binascii.hexlify(apacket))
-    return apacket
+
+    for i in range(len(packet)-7):
+        packet[i+7] ^= result[i]
+#    print("Debug: Decrypted ", binascii.hexlify(bytearray(packet)))
+    return packet
 
 class TelinkDeviceManager(gatt.DeviceManager):
     def device_discovered(self, device):
@@ -118,17 +116,19 @@ class Peripheral(gatt.Device):
         self.callback = callback
 
     def characteristic_value_updated(self, characteristic, value):
-        print("Debug: Characteristic value update", value)
-        decrypted = decrypt_packet(self.link.sk, self.link.macdata, value)
-        print("Debug: decrypted packet for mesh %s: %s" % (self.link.mesh, binascii.hexlify(bytearray(decrypted))))
-        self.callback(self.link.mesh, decrypted)
+        print("Debug: Characteristic value update", binascii.hexlify(bytearray(value)))
+        if self.link is not None:
+            value = list(value)
+            decrypted = decrypt_packet(self.link.sk, self.link.macdata, value)
+            print("Debug: decrypted packet for mesh %s: %s" % (self.link.mesh, binascii.hexlify(bytearray(decrypted))))
+            self.callback(self.link.mesh, decrypted)
     
     def getCharacteristics(self, characteristic_uuid):
         for s in self.services:
             for c in s.characteristics:
-                print("Debug: Matching characteristic %s to %s" % (c.uuid, characteristic_uuid))
+#                print("Debug: Matching characteristic %s to %s" % (c.uuid, characteristic_uuid))
                 if c.uuid == characteristic_uuid:
-                    print("Debug: Found matched charateristic")
+                    print("Debug: Found matched charateristic ", characteristic_uuid)
                     return c
 
 
@@ -216,7 +216,7 @@ class telink:
                 try:
                     self.pairing.write_value(bytes(packet))
                     time.sleep(1)
-                    data2 = self.pairing.read_value()
+                    data2 = bytes(self.pairing.read_value())
                 except Exception as ex:
                     print("Exception: unable to connect")
                     raise Exception("Unable to connect: %s" % ex)
@@ -244,7 +244,11 @@ class telink:
         packet[9] = (self.vendor >> 8) & 0xff
         for i in range(len(data)):
             packet[10 + i] = data[i]
+        print("send_packet verify plain: ", binascii.hexlify(bytearray(bytes(packet))))
         enc_packet = encrypt_packet(self.sk, self.macdata, packet)
+        print("send_packet verify encrypted: ", binascii.hexlify(bytearray(bytes(enc_packet))))
+#        dec_packet = decrypt_packet(self.sk, self.macdata, enc_packet)
+#        print("send_packet verify decrypted: ", binascii.hexlify(bytearray(bytes(dec_packet))))
         self.packet_count += 1
         if self.packet_count > 65535:
             self.packet_count = 1
