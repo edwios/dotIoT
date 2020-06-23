@@ -72,7 +72,7 @@ def encrypt_packet(sk, address, packet):
     return packet
 
 def decrypt_packet(sk, address, packet):
-    print("Debug: decrypting from ", sk, address, packet, type(packet))
+#    print("Debug: decrypting from ", sk, address, packet, type(packet))
     iv = [address[0], address[1], address[2], packet[0], packet[1], packet[2],
           packet[3], packet[4], 0, 0, 0, 0, 0, 0, 0, 0] 
     plaintext = [0] + iv[0:15]
@@ -97,15 +97,15 @@ class Peripheral(gatt.Device):
     def connect_succeeded(self):
         super().connect_succeeded()
         self.serviceResolved = False
-        print("[%s] Connected" % (self.mac_address))
+#        print("[%s] Connected" % (self.mac_address))
 
     def connect_failed(self, error):
         super().connect_failed(error)
-        print("[%s] Connection failed: %s" % (self.mac_address, str(error)))
+#        print("[%s] Connection failed: %s" % (self.mac_address, str(error)))
 
     def disconnect_succeeded(self):
         super().disconnect_succeeded()
-        print("[%s] Disconnected" % (self.mac_address))
+#        print("[%s] Disconnected" % (self.mac_address))
 
     def services_resolved(self):
         super().services_resolved()
@@ -125,11 +125,11 @@ class Peripheral(gatt.Device):
         value = list(value)
         c_uuid = str(characteristic.uuid)
         self.c_values[c_uuid] = value
-        print("Debug: Characteristic %s value update %s" % (characteristic.uuid, binascii.hexlify(bytearray(self.c_values.get(c_uuid)))))
+#        print("Debug: Characteristic %s value update %s" % (characteristic.uuid, binascii.hexlify(bytearray(self.c_values.get(c_uuid)))))
         if c_uuid == '00010203-0405-0607-0809-0a0b0c0d1911':
-            print("Debug: received notication from 1911 with ", binascii.hexlify(bytearray(value)))
+#            print("Debug: received notication from 1911 with ", binascii.hexlify(bytearray(value)))
             if self.link is not None:
-                print("Debug: callback exists, decrypting received value from 1911")
+#                print("Debug: callback exists, decrypting received value from 1911")
                 decrypted = decrypt_packet(self.link.sk, self.link.macdata, value)
                 self.callback(self.link.mesh, decrypted)
 
@@ -139,7 +139,7 @@ class Peripheral(gatt.Device):
             for c in s.characteristics:
 #                print("Debug: Matching characteristic %s to %s" % (c.uuid, characteristic_uuid))
                 if c.uuid == characteristic_uuid:
-                    print("Debug: Found matched charateristic ", characteristic_uuid)
+#                    print("Debug: Found matched charateristic ", characteristic_uuid)
                     return c
 
 
@@ -168,14 +168,14 @@ class telink:
         if (self.manager is None):
             print("Error: Device manager not defined!")
         else:
-            print("Debug: Thread starting manager")
+#            print("Debug: Thread starting manager")
             self.manager.run()
 
     def set_sk(self, sk):
         self.sk = sk
 
     def registerConnectableDevices(self, scanTime = 10):
-        print("Debug: registering devices")
+#        print("Debug: registering devices")
         self.manager.start_discovery()
         time.sleep(scanTime)
         self.manager.stop_discovery()
@@ -190,9 +190,9 @@ class telink:
         self.mac = mac
         self.macarray = mac.split(':')
         self.macdata = [int(self.macarray[5], 16), int(self.macarray[4], 16), int(self.macarray[3], 16), int(self.macarray[2], 16), int(self.macarray[1], 16), int(self.macarray[0], 16)]
-        print("Debug: connecting to %s" % self.mac)
+#        print("Debug: connecting to %s" % self.mac)
         if (not self.scanned):
-            print("Debug: no device have registered")
+#            print("Debug: no device have registered")
             self.registerConnectableDevices()
             lt = time.monotonic()
             while (time.monotonic() - lt < 15):
@@ -203,7 +203,7 @@ class telink:
             self.device = Peripheral(mac_address = self.mac, manager = self.manager)
     #        self.device.setConnectedCallback(callback = onConnected)
             self.device.connect()
-            print("Debug: waiting for service to resolve")
+#            print("Debug: waiting for service to resolve")
             lt = time.monotonic()
             while (time.monotonic() - lt < 5):
                 time.sleep(0.2)
@@ -211,7 +211,7 @@ class telink:
                     break
             if (self.device.serviceResolved):
     #    def onConnected(self):
-                print("Debug: all services resolved")
+#                print("Debug: all services resolved")
                 self.notification = self.device.getCharacteristics("00010203-0405-0607-0809-0a0b0c0d1911")
                 self.notification.enable_notifications()
                 self.control = self.device.getCharacteristics("00010203-0405-0607-0809-0a0b0c0d1912")
@@ -239,9 +239,9 @@ class telink:
                     return None
 
                 self.sk = generate_sk(self.name, self.password, data[0:8], data2[1:9])
-                print("Debug: sk, mac, macdata: ", self.sk, self.mac, self.macdata)
+#                print("Debug: sk, mac, macdata: ", self.sk, self.mac, self.macdata)
                 if self.callback is not None:
-                    print("Debug: setting notification call back")
+#                    print("Debug: setting notification call back")
                     self.device.setNotificationCallback(self, self.callback)
                     self.notification.write_value(bytes([0x1]))
             else:
@@ -262,11 +262,9 @@ class telink:
         packet[9] = (self.vendor >> 8) & 0xff
         for i in range(len(data)):
             packet[10 + i] = data[i]
-        print("send_packet verify plain: ", binascii.hexlify(bytearray(bytes(packet))))
+#        print("send_packet verify plain: ", binascii.hexlify(bytearray(bytes(packet))))
         enc_packet = encrypt_packet(self.sk, self.macdata, packet)
-        print("send_packet verify encrypted: ", binascii.hexlify(bytearray(bytes(enc_packet))))
-#        dec_packet = decrypt_packet(self.sk, self.macdata, enc_packet)
-#        print("send_packet verify decrypted: ", binascii.hexlify(bytearray(bytes(dec_packet))))
+#        print("send_packet verify encrypted: ", binascii.hexlify(bytearray(bytes(enc_packet))))
         self.packet_count += 1
         if self.packet_count > 65535:
             self.packet_count = 1
@@ -280,9 +278,7 @@ class telink:
                 print("Write failed")
                 break
             try:
-                print("Writing bytes")
                 self.control.write_value(bytes(enc_packet))
-                print("Write successful")
                 break
             except:
                 self.connect()

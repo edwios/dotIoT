@@ -57,7 +57,7 @@ OFF_DATA = [0,0,0]
 MAXMESHCONNFAILS =4		# Max tries before we declare the mesh is not reachable from this device
 MESHREFRESHPERIOD =60	# Update mesh info every minute
 CALLBACKWAIT = 5		# Wait 5s for a callback before we count it missing
-SCANDURATION = 10		# Scan for BLE devices for 20s
+SCANDURATION = 15		# Scan for BLE devices for 20s
 MINDISCRSSI = -100		# Minimum signal strength we consider the device usable for connection
 StringType = type("")
 IntegerType = type(9)
@@ -85,7 +85,7 @@ def foundLDSdevices(autoconnect=False):
     autoconenctID = -1
     _network = telink.telink(0x0211, None, _meshname, _meshpass, callback=blecallback)
     # Reset bluetooth adaptor
-    print("Debug: Resetting Bluetooth")
+#    print("Debug: Resetting Bluetooth")
     _network.manager.is_adapter_powered = False
     time.sleep(2)
     _network.manager.is_adapter_powered = True
@@ -133,7 +133,7 @@ def foundLDSdevices(autoconnect=False):
                                 if isBLEMACEqual(dev.addr, toMACString(details['deviceMac'])):
                                     dev.attr = details
                                     dev.isBad = False
-                                    print("%s DEBUG: %s has ID %d" % (time.strftime('%F %H:%M:%S'), dev.attr['deviceName'], dev.deviceID))
+#                                    print("%s DEBUG: %s has ID %d" % (time.strftime('%F %H:%M:%S'), dev.attr['deviceName'], dev.deviceID))
                                     count += 1
                                     _ldsdevices[count] = dev
                                     if dev.rssi > maxrssi:
@@ -147,14 +147,14 @@ def foundLDSdevices(autoconnect=False):
             pickle.dump(_ldsdevices, open("dbcache.p", "wb"))
         except:
             print("%s ERROR: Cannot save presistance dbcache.p" % time.strftime('%F %H:%M:%S'))
-        print("%s DEBUG: %s devices found and saved. Will auto connect to device %s" % (time.strftime('%F %H:%M:%S'), _ndev, autoconenctID))
+#        print("%s DEBUG: %s devices found and saved. Will auto connect to device %s" % (time.strftime('%F %H:%M:%S'), _ndev, autoconenctID))
     return autoconenctID
 
 
 def blecallback(mesh, mesg):
     global _gotE1callback, _callBackCmd
 
-    print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M:%S'), binascii.hexlify(bytearray(mesg))))
+#    print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M:%S'), binascii.hexlify(bytearray(mesg))))
     _callBackCmd = mesg[7]
     if _callBackCmd == 0xE1:
         _gotE1callback = True
@@ -174,19 +174,29 @@ def cmd(n, ac, command, data):
     targetdevice = None
     connectdevice = None
     for dev in list(_ldsdevices.values()):
-        if dev.deviceID == n:
-            targetdevice = dev
         if dev.deviceID == ac:
             connectdevice = dev
+    for dev in _devices:
+        if dev.get('deviceId') == n:
+            targetdevice = dev
     if n > 0:
         if (targetdevice == None) or (connectdevice == None):
             print("cmd error: Missing either target: %s or ac: %s" % (n, ac))
             return False
-        target = targetdevice.deviceID
+        target = targetdevice.get('deviceAddress')
+        # Device Address in device map has the HiByte and LowByte reversed
+        # Therefore, to properly use the address to communicate, it must be fixed
+        # Fixing Device Address
+#        print("Debug: Wrong target device address ", target)
+        tarH = int(target/256)
+        tarL = int((target/256-tarH)*256)
+        target = tarL*256+tarH
+#        print("Debug: Corrected target device address ", target)
     else:
         target = 0
+#    print("%s DEBUG: Sending to %s via %s" % (time.strftime('%F %H:%M:%S'), target, connectdevice.attr.get('deviceAddress')))
     if not _meshconnected:
-        print("%s INFO: Connecting to mesh %s (%s) via device %s of ID %d and MAC %s" % (time.strftime('%F %H:%M:%S'), _meshname, _meshpass, connectdevice.attr['deviceName'], connectdevice.deviceID, connectdevice.addr))
+#        print("%s INFO: Connecting to mesh %s (%s) via device %s of ID %d and MAC %s" % (time.strftime('%F %H:%M:%S'), _meshname, _meshpass, connectdevice.attr.get('deviceName'), connectdevice.deviceID, connectdevice.addr))
 #        if _network == None or _network.mac != connectdevice.addr:
         if _network == None:
             _network = telink.telink(0x0211, connectdevice.addr, _meshname, _meshpass, callback=blecallback)
@@ -195,11 +205,7 @@ def cmd(n, ac, command, data):
         # The BLE connection may not always happen on a Raspberry Pi due to the hardware limitation
         # Therefore, let's give it a few chances
         while (not _meshconnected) and (tries < MAXMESHCONNFAILS):
-#            try:
-#                mesh_dev = _network.connect(connectdevice.addr)
-#            except:
-#                print("Exception while connecting to device ", connectdevice.addr)
-            print("%s Debug: attempt to connect to %s" % (time.strftime('%F %H:%M:%S'), connectdevice.addr))
+#            print("%s Debug: attempt to connect to %s" % (time.strftime('%F %H:%M:%S'), connectdevice.addr))
             mesh_dev = _network.connect(connectdevice.addr)
             lt = time.monotonic()
             while (time.monotonic() - lt < 5) and (mesh_dev is not None):
@@ -224,7 +230,7 @@ def cmd(n, ac, command, data):
                         dev.isBad = True
                 _refreshmesh = True
     if _meshconnected:
-        print("%s DEBUG: Sending to %s of ID %s, MAC: %s, Cmd: %s, Data: %s" % (time.strftime('%F %H:%M:%S'), targetdevice.attr['deviceName'], target, targetdevice.addr, command, data))
+#        print("%s DEBUG: Sending to %s of ID %s, Cmd: %s, Data: %s" % (time.strftime('%F %H:%M:%S'), targetdevice.get('deviceName'), target, command, data))
         try:
             _network.send_packet(target, command, data)
             psent = True
@@ -237,7 +243,7 @@ def cmd(n, ac, command, data):
 def on_connect(client, userdata, flags, rc):
     global connected
     connected = True
-
+#    print("Debug: MQTT broker connected")
     # Subscribing in on_connect() means that if we lose the connection and
     # reconnect then subscriptions will be renewed.
     #    client.subscribe([("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0)])
@@ -260,46 +266,50 @@ def on_message(client, userdata, msg):
     global _acdevice
     global _network
 
+#    print("%s Debug: got mqtt message %s, topic %s" % (time.strftime('%F %H:%M:%S'), msg.payload, msg.topic))
     if (msg.topic == "sensornet/command"):
         mqttcmd = str(msg.payload.decode("utf-8"))
-        if (_lastmqttcmd != mqttcmd) or (mqttcmd in _speciaCmds):
-            _lastmqttcmd = mqttcmd
-            dids, hcmd = mqttcmd.split('/')
-            hcmd = hcmd.lower()
-            did = int(dids)
-            if (did == 0):
-                for dev in list(_ldsdevices.values()):
-                    if (dev.attr['deviceName'] == dids):
-                        did = dev.deviceID
-            print("%s DEBUG: Recevied %s from MQTT > device: %s, cmd: %s, autoconnect: %d" % (time.strftime('%F %H:%M:%S'), mqttcmd, did, hcmd, _acdevice))
-            if (hcmd == "on"):
-                cmd(did, _acdevice, 0xd0, ON_DATA)
-            elif (hcmd == "off"):
-                cmd(did, _acdevice, 0xd0, OFF_DATA)
-            elif (hcmd == "alarm"):
-                cmd(did, _acdevice, 0xd0, ON_DATA)
-                time.sleep(0.2)
-                cmd(did, _acdevice, 0xe2, [0x04, 0xFF, 0x00, 0x00])
-            elif (hcmd == "disarm"):
-                cmd(did, _acdevice, 0xd0, ON_DATA)
-                time.sleep(0.2)
-                cmd(did, _acdevice, 0xe2, [0x05, 0x26])
-            elif (hcmd == "disconnect"):
-                if _meshconnected:
-                    _network.disconnect()
-                    _meshconnected = False
-            elif (hcmd == "reset"):
-                if _meshconnected:
-                    _network.disconnect()
+        _lastmqttcmd = mqttcmd
+        dids, hcmd = mqttcmd.split('/')
+        hcmd = hcmd.lower()
+        did = int(dids)
+        for dev in _devices:
+            devname = dev.get('deviceName')
+            devid = dev.get('deviceId')
+#            print("Debug: ", devname, devid)
+            if (int(devid) == did):
+                did = dev.get('deviceId')
+            elif (devname == dids):
+                did = dev.get('deviceId')
+#        print("%s DEBUG: Recevied %s from MQTT > device ID: %s, cmd: %s, autoconnect: %d" % (time.strftime('%F %H:%M:%S'), mqttcmd, did, hcmd, _acdevice))
+        if (hcmd == "on"):
+            cmd(did, _acdevice, 0xd0, ON_DATA)
+        elif (hcmd == "off"):
+            cmd(did, _acdevice, 0xd0, OFF_DATA)
+        elif (hcmd == "alarm"):
+            cmd(did, _acdevice, 0xd0, ON_DATA)
+            time.sleep(0.2)
+            cmd(did, _acdevice, 0xe2, [0x04, 0xFF, 0x00, 0x00])
+        elif (hcmd == "disarm"):
+            cmd(did, _acdevice, 0xd0, ON_DATA)
+            time.sleep(0.2)
+            cmd(did, _acdevice, 0xe2, [0x05, 0x26])
+        elif (hcmd == "disconnect"):
+            if _meshconnected:
+                _network.disconnect()
                 _meshconnected = False
-                _refreshmesh = True
-            elif (hcmd == "terminate"):
-                if _meshconnected:
-                    _network.disconnect()
-                print("INFO: Received termination command, exiting.")
-                sys.exit(0)								
-            elif (hcmd == "settime"):
-                settime(did)
+        elif (hcmd == "reset"):
+            if _meshconnected:
+                _network.disconnect()
+            _meshconnected = False
+            _refreshmesh = True
+        elif (hcmd == "terminate"):
+            if _meshconnected:
+                _network.disconnect()
+            print("INFO: Received termination command, exiting.")
+            sys.exit(0)								
+        elif (hcmd == "settime"):
+            settime(did)
 
 def settime(did):
     # Set current time to device
@@ -315,7 +325,7 @@ def checkMeshConnection(acdevice, autoconnect):
     global _callBackCmd
     global _refreshmesh
 
-    print("%s DEBUG: validating mesh connection" % time.strftime('%F %H:%M:%S'))
+#    print("%s DEBUG: validating mesh connection" % time.strftime('%F %H:%M:%S'))
     if (acdevice >= 0) and autoconnect:
         sendok = cmd(acdevice, acdevice, 0xe0, [0xff, 0xff])
         if sendok:
@@ -336,7 +346,7 @@ def refreshMesh(autoconnect):
                     maxrssi = d.rssi
                     acdevice = d.deviceID
     if acdevice == -1:
-        print("%s DEBUG: Refreshing mesh data" % time.strftime('%F %H:%M:%S'))
+        print("%s INFO: Refreshing mesh data" % time.strftime('%F %H:%M:%S'))
         acdevice = foundLDSdevices(autoconnect)
         if (acdevice >= 0) and autoconnect:
             sendok = cmd(acdevice, acdevice, 0xe0, [0xff, 0xff])
@@ -349,6 +359,11 @@ def refreshMesh(autoconnect):
                 print("%s ERROR: No auto-connectable device was found" % time.strftime('%F %H:%M:%S'))
                 _refreshmesh = True
     return acdevice
+
+def listMeshDevices(map):
+    print("Devices available to control:")
+    for dev in map:
+        print("[%s] %s" % (dev['deviceId'], dev['deviceName']))
 
 def main():
     global _ndev
@@ -363,9 +378,11 @@ def main():
     global _devmap
     global _ldevmap
     global _devices
+    global _mqtthub
     global MESHPASS, MESHNAME
 
     print("%s INFO: Starting smartline server" % (time.strftime('%F %H:%M:%S')))
+    print("For MQTT, send message with topic 'sensornet/command' and body as 'deviceID/command'")
     parser = argparse.ArgumentParser()
     parser.add_argument("-N", "--meshname", help="Name of the mesh network", default="")
     parser.add_argument("-P", "--meshpass", help="Password of the mesh network", default="")
@@ -374,6 +391,7 @@ def main():
     parser.add_argument("-a", "--auto", help="Auto connect to mesh upon start", action="store_true", default=True)
     parser.add_argument("-s", "--shared", help="Shared file (no extension) of device details. Default /tmp/share", default="/tmp/shared.bin")
     parser.add_argument("-R", "--refresh", help="Refresh cache. Use when mesh was updated", action="store_true", default=False)
+    parser.add_argument("-m", "--mqtthost", help="MQTT host", default='127.0.0.1')
     parser.add_argument("action", help="on, off to turn on off device, wait to wait for mqtt input, settime to set the date time to the device")
     args = parser.parse_args()
     meshaction = args.action
@@ -390,26 +408,28 @@ def main():
     sharedtxt = sharedbase+".json"
     choosefromlist = args.choose
     refreshCache = args.refresh
+    _mqtthub = args.mqtthost
     tmpMeshName = ""
     tmpMeshPass = ""
 
     if (os.path.exists(sharedtxt)):
-        print("%s DEBUG: Found plain shared" % time.strftime('%F %H:%M:%S'))
+        print("%s INFO: Found plain shared" % time.strftime('%F %H:%M:%S'))
         _devmap = json.load(open(sharedtxt))
     elif os.path.exists(sharedbin):
-        print("%s DEBUG: Found shared, attempt to decrypt" % time.strftime('%F %H:%M:%S'))
+        print("%s INFO: Found shared, attempt to decrypt" % time.strftime('%F %H:%M:%S'))
         decrypted_data = decrypt_share(sharedbin, _default_passcode)
         _devmap = json.loads(decrypted_data)
-        print("%s DEBUG: Writing decrypted file to %s" % (time.strftime('%F %H:%M:%S'), sharedtxt))
+#        print("%s DEBUG: Writing decrypted file to %s" % (time.strftime('%F %H:%M:%S'), sharedtxt))
         with open(sharedtxt, 'w', encoding='utf-8') as f:
             json.dump(_devmap, f, ensure_ascii=False, indent=4)
     if _devmap is not None:
         _devices = _devmap['devices']
         _ldevmap = len(_devices)
         if (_ldevmap > 0):
-            print("%s DEBUG: Loaded %d devices in map file" % (time.strftime('%F %H:%M:%S'), _ldevmap))
+            print("%s INFO: Loaded %d devices in map file" % (time.strftime('%F %H:%M:%S'), _ldevmap))
             tmpMeshName = _devmap['space']['meshNetworkName']
             tmpMeshPass = _devmap['space']['meshNetworkPassword']
+            listMeshDevices(_devices)
         else:
             print("%s ERROR: Something's wrong, no device included in sharing or decryption failed" % time.strftime('%F %H:%M:%S'))
 
@@ -435,7 +455,7 @@ def main():
     if autoconnect:
         _acdevice = refreshMesh(autoconnect)
         _meshdevid = _acdevice
-        print("%s DEBUG: Autoconnect device ID: %d" % (time.strftime('%F %H:%M:%S'), _acdevice))
+#        print("%s DEBUG: Autoconnect device ID: %d" % (time.strftime('%F %H:%M:%S'), _acdevice))
     else:
         # Instead of looking for devices everytime, let's use a cache :)
         if os.path.exists("dbcache.p") and (not choosefromlist) and (not refreshCache):
@@ -476,7 +496,7 @@ def main():
 # So we now only check and refresh upon error
                 if (time.monotonic() - lt > MESHREFRESHPERIOD):
                     lt = time.monotonic()
-                    print("%s DEBUG: Periodic mesh ping" % time.strftime('%F %H:%M:%S'))
+                    print("%s INFO: Periodic mesh ping" % time.strftime('%F %H:%M:%S'))
                     checkMeshConnection(_acdevice, autoconnect)
                     cblt = time.monotonic()
                 if (time.monotonic() - cblt > CALLBACKWAIT) and _expectE1CallBack:
@@ -487,7 +507,7 @@ def main():
                         print("%s WARN: Didn't receive any E1 callback" % time.strftime('%F %H:%M:%S'))
                         _refreshmesh = True
                     else:
-                        print("%s DEBUG: Got E1 callback" % time.strftime('%F %H:%M:%S'))
+#                        print("%s DEBUG: Got E1 callback" % time.strftime('%F %H:%M:%S'))
                         _gotE1callback = False
                     _expectE1CallBack = False
 
