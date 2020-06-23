@@ -93,6 +93,7 @@ class Peripheral(gatt.Device):
     serviceResolved = False
     link = None
     callback = None
+    c_values = {}
     def connect_succeeded(self):
         super().connect_succeeded()
         self.serviceResolved = False
@@ -114,14 +115,24 @@ class Peripheral(gatt.Device):
     def setNotificationCallback(self, link, callback):
         self.link = link
         self.callback = callback
+    
+    def getValue(self, characteristic):
+        c_uuid = str(characteristic.uuid)
+        value = self.c_values.get(c_uuid)
+        return value
 
     def characteristic_value_updated(self, characteristic, value):
-        print("Debug: Characteristic value update", binascii.hexlify(bytearray(value)))
-        if self.link is not None:
-            value = list(value)
-            decrypted = decrypt_packet(self.link.sk, self.link.macdata, value)
-            print("Debug: decrypted packet for mesh %s: %s" % (self.link.mesh, binascii.hexlify(bytearray(decrypted))))
-            self.callback(self.link.mesh, decrypted)
+        value = list(value)
+        c_uuid = str(characteristic.uuid)
+        self.c_values[c_uuid] = value
+        print("Debug: Characteristic %s value update %s" % (characteristic.uuid, binascii.hexlify(bytearray(self.c_values.get(c_uuid)))))
+        if c_uuid == '00010203-0405-0607-0809-0a0b0c0d1911':
+            print("Debug: received notication from 1911 with ", binascii.hexlify(bytearray(value)))
+            if self.link is not None:
+                print("Debug: callback exists, decrypting received value from 1911")
+                decrypted = decrypt_packet(self.link.sk, self.link.macdata, value)
+                self.callback(self.link.mesh, decrypted)
+
     
     def getCharacteristics(self, characteristic_uuid):
         for s in self.services:
@@ -202,6 +213,7 @@ class telink:
     #    def onConnected(self):
                 print("Debug: all services resolved")
                 self.notification = self.device.getCharacteristics("00010203-0405-0607-0809-0a0b0c0d1911")
+                self.notification.enable_notifications()
                 self.control = self.device.getCharacteristics("00010203-0405-0607-0809-0a0b0c0d1912")
                 self.pairing = self.device.getCharacteristics("00010203-0405-0607-0809-0a0b0c0d1914")
 
@@ -213,13 +225,18 @@ class telink:
                 packet = [0x0c]
                 packet += data[0:8]
                 packet += enc_data[0:8]
-                try:
-                    self.pairing.write_value(bytes(packet))
-                    time.sleep(1)
-                    data2 = bytes(self.pairing.read_value())
-                except Exception as ex:
+                self.pairing.write_value(bytes(packet))
+                time.sleep(1)
+                self.pairing.c_value = None
+                lt = time.monotonic()
+                data2 = None
+                self.pairing.read_value()
+                while time.monotonic() - lt < 5 and data2 is None:
+                    data2 = self.device.getValue(self.pairing)
+                    time.sleep(0.1)
+                if data2 is None:
                     print("Exception: unable to connect")
-                    raise Exception("Unable to connect: %s" % ex)
+                    return None
 
                 self.sk = generate_sk(self.name, self.password, data[0:8], data2[1:9])
                 print("Debug: sk, mac, macdata: ", self.sk, self.mac, self.macdata)
@@ -232,6 +249,7 @@ class telink:
             return self.device
         else:
             print("Error: scanning failed, check BT hardware!")
+        return None
 
     def send_packet(self, target, command, data):
         packet = [0] * 20

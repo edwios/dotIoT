@@ -154,7 +154,7 @@ def foundLDSdevices(autoconnect=False):
 def blecallback(mesh, mesg):
     global _gotE1callback, _callBackCmd
 
-    print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M:%S'), binascii.hexlify(mesg)))
+    print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M:%S'), binascii.hexlify(bytearray(mesg))))
     _callBackCmd = mesg[7]
     if _callBackCmd == 0xE1:
         _gotE1callback = True
