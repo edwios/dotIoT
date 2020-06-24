@@ -272,13 +272,13 @@ def on_message(client, userdata, msg):
         _lastmqttcmd = mqttcmd
         dids, hcmd = mqttcmd.split('/')
         hcmd = hcmd.lower()
-        did = int(dids)
         for dev in _devices:
             devname = dev.get('deviceName')
             devid = dev.get('deviceId')
 #            print("Debug: ", devname, devid)
-            if (int(devid) == did):
-                did = dev.get('deviceId')
+            if (dids.isdigit()):
+                if (int(devid) == int(dids)):
+                    did = dev.get('deviceId')
             elif (devname == dids):
                 did = dev.get('deviceId')
 #        print("%s DEBUG: Recevied %s from MQTT > device ID: %s, cmd: %s, autoconnect: %d" % (time.strftime('%F %H:%M:%S'), mqttcmd, did, hcmd, _acdevice))
@@ -347,6 +347,7 @@ def refreshMesh(autoconnect):
                     acdevice = d.deviceID
     if acdevice == -1:
 #        print("%s DEBUG: Refreshing mesh data" % time.strftime('%F %H:%M:%S'))
+        print("Warning: lost contact with ALL devices. Attempting to refresh")
         acdevice = foundLDSdevices(autoconnect)
         if (acdevice >= 0) and autoconnect:
             sendok = cmd(acdevice, acdevice, 0xe0, [0xff, 0xff])
