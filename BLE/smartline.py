@@ -135,7 +135,7 @@ def foundLDSdevices(autoconnect=False):
                         dev.deviceID = unpack('<i', unhexlify(sigs))[0]
                         if _ldevmap > 0:
                             for details in _devices:
-                                if DEBUG: print("%s DEBUG: Matching ID %d of MAC %s with %s" % (time.strftime('%F %H:%M:%S'), dev.deviceID, dev.addr, toMACString(details['deviceMac'])))
+#                                if DEBUG: print("%s DEBUG: Matching ID %d of MAC %s with %s" % (time.strftime('%F %H:%M:%S'), dev.deviceID, dev.addr, toMACString(details['deviceMac'])))
                                 if isBLEMACEqual(dev.addr, toMACString(details['deviceMac'])):
                                     dev.attr = details
                                     dev.isBad = False
@@ -158,26 +158,87 @@ def foundLDSdevices(autoconnect=False):
 
 
 def blecallback(mesh, mesg):
+    global DEBUG
     global _gotE1callback, _callBackCmd, _callBackSubCmd, _expectedCallBack, DEBUG
-    expectedCmd = 0
-    expectedSubCmd = 0
 
     if DEBUG: print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M:%S'), binascii.hexlify(bytearray(mesg))))
     _callBackCmd = mesg[7]
-    _callBackSubCmd = mesg[11]
+    if _callBackCmd == 0xE1:
+        _gotE1callback = True
+    else:
+        _gotE1callback = False
+        parseCallback(mesg)
+    pass
+
+def dumpCallback(scp, mesg):
+    global DEBUG
+    cp = 7      # Callback always at positon 7
+    scb = binascii.hexlify(bytearray(mesg[cp:cp+1])).decode("utf-8")
+    scbs = 'n/a'
+    if (scp != 0 and scp != cp):
+        scbs = binascii.hexlify(bytearray(mesg[scp:scp+1])).decode("utf-8")
+    else:
+        scp = cp + 2    # No subcommand
+    sdata = binascii.hexlify(bytearray(mesg[scp+1:])).decode("utf-8")
+    hexdata = " ".join(sdata[i:i+2] for i in range(0, len(sdata), 2))
+    if DEBUG: print("%s NOTI: Received %s,%s callback with %s" % (time.strftime('%F %H:%M:%S'), scb, scbs, hexdata))
+
+def parseCallback(data):
+    global _devices, client
+    global _callBackCmd, _callBackSubCmd, _expectedCallBack, DEBUG
+    mesg = {}
+    cb = data[7]
+    _callBackCmd = cb
+    expectedCmd = 0
+    expectedSubCmd = 0
     if _expectedCallBack != []:
         expectedCmd = _expectedCallBack[0]
         expectedSubCmd = _expectedCallBack[1]
-    if _callBackCmd == 0xE1:
-        _gotE1callback = True
-    if _callBackCmd == expectedCmd and expectedCmd != 0 and _callBackSubCmd == expectedSubCmd:
-        cb = binascii.hexlify(mesg[7:8]).decode("utf-8")
-        cbs = binascii.hexlify(mesg[11:12]).decode("utf-8")
-        data = binascii.hexlify(bytearray(mesg[12:])).decode("utf-8") 
-        hexdata = " ".join(data[i:i+2] for i in range(0, len(data), 2))
-        _expectedCallBack = []
-        print("%s NOTI: Received %s,%s callback with %s" % (time.strftime('%F %H:%M:%S'), cb, cbs, hexdata))
-    pass
+    if cb == 0xeb:
+        scp = 11
+        cbs = data[scp]
+        _callBackSubCmd = cbs
+        if _callBackCmd == expectedCmd and expectedCmd != 0 and (_callBackSubCmd == expectedSubCmd or expectedSubCmd == 0):
+            _expectedCallBack = []
+        dumpCallback(scp, data)
+        if cbs == 0x85:     # Calculated astro time settings
+            sunrise_h_dst = data[16]
+            sunrise_m_dst = data[17]
+            sunset_h_dst = data[18]
+            sunset_m_dst = data[19]
+            print("%s INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (time.strftime('%F %H:%M:%S'), sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
+    if cb == 0xdc:          # Status report (from 0x1911)
+        scp = 0
+        _callBackSubCmd = 0
+        if _callBackCmd == expectedCmd and expectedCmd != 0 and (_callBackSubCmd == expectedSubCmd or expectedSubCmd == 0):
+            _expectedCallBack = []
+        dumpCallback(scp, data)
+        did1 = data[10]
+        did2 = data[14]
+        lum1 = data[12]
+        lum2 = data[16]
+        cct1 = data[13]
+        cct2 = data[17]
+        msc1 = data[18]
+        msc2 = data[19]
+        if did1 > 0:
+            for dev in _devices:
+                if dev.get('deviceAddress') == did1:
+                    dev_name = dev.get('deviceName')
+                    mesg = {"deviceName":dev_name, "lum":str(lum1), "cct":str(cct1), "msc":str(msc1)}
+                    jstr = json.dumps(mesg)
+                    if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
+                    client.publish('sensornet/status', jstr)
+                    break
+        if did2 > 0:
+            for dev in _devices:
+                if dev.get('deviceAddress') == did2:
+                    dev_name = dev.get('deviceName')
+                    mesg = {"deviceName":dev_name, "lum":str(lum2), "cct":str(cct2), "msc":str(msc2)}
+                    jstr = json.dumps(mesg)
+                    if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
+                    client.publish('sensornet/status', jstr)
+                    break
 
 def cmd(n, ac, command, data):
     global _network
@@ -205,16 +266,16 @@ def cmd(n, ac, command, data):
                 target = n
     else:
         for dev in _devices:
-            if dev.get('deviceId') == n:
+            if dev.get('deviceAddress') == n:
                 targetdevice = dev
                 targetdeviceName = targetdevice.get('deviceName')
                 target = targetdevice.get('deviceAddress')
                 # Device Address in device map has the HiByte and LowByte reversed
                 # Therefore, to properly use the address to communicate, it must be fixed
                 # Fixing Device Address
-                tarH = int(target/256)
-                tarL = int((target/256-tarH)*256)
-                target = tarL*256+tarH
+                # tarH = int(target/256)
+                # tarL = int((target/256-tarH)*256)
+                # target = tarL*256+tarH
     if (targetdevice == None) or (connectdevice == None):
         print("Error: cmd error: Missing either target: %s or ac: %s" % (n, ac))
         return False
@@ -302,18 +363,23 @@ def on_message(client, userdata, msg):
     if (topic == "sensornet/command" and payload is not None):
         mqttcmd = str(payload.decode("utf-8"))
         _lastmqttcmd = mqttcmd
-        dids, hcmd = mqttcmd.split('/')
-        hcmd = hcmd.lower()
+        dids, mhcmd = mqttcmd.split('/')
+        mhcmd = mhcmd.lower()
+        hexdata = ''
+        if ':' in mhcmd:
+            hcmd,hexdata = mhcmd.split(':')
+        else:
+            hcmd = mhcmd
         did = None
         for dev in _devices:
             devname = dev.get('deviceName')
-            devid = dev.get('deviceId')
+            devid = dev.get('deviceAddress')
 #            print("Debug: ", devname, devid)
             if (dids.isdigit()):
                 if (int(devid) == int(dids)):
-                    did = dev.get('deviceId')
+                    did = dev.get('deviceAddress')
             elif (devname == dids):
-                did = dev.get('deviceId')
+                did = dev.get('deviceAddress')
         if (did is None):
             for grp in _groups:
                 grpname = grp.get('groupName')
@@ -326,6 +392,30 @@ def on_message(client, userdata, msg):
                 cmd(did, _acdevice, 0xd0, ON_DATA)
             elif (hcmd == "off"):
                 cmd(did, _acdevice, 0xd0, OFF_DATA)
+            elif (hcmd == "dim"):
+                if hexdata != '':
+                    i = int(hexdata)
+                    if (i > 100 or i < 0):
+                        print("ERROR: Lumnance value must be between 0 and 100")
+                    else:
+                        data = i.to_bytes(1, 'big')
+                        cmd(did, _acdevice, 0xd2, list(data))
+            elif (hcmd == "cct"):
+                if hexdata != '':
+                    i = int(hexdata)
+                    if (i < 1800 or i > 6500):
+                        print("ERROR: CCT value must be between 1800K and 6500K")
+                    else:
+                        ct = int(100 * (i - 2700)/3800)
+                        if ct < 0:
+                            ct = 0
+                        if ct > 100:
+                            ct = 100
+                        data = i.to_bytes(2, 'big')
+                        cmd(did, _acdevice, 0xf5, [0x10] + list(data))
+                        time.sleep(0.2)
+                        data = ct.to_bytes(1, 'big')
+                        cmd(did, _acdevice, 0xe2, [0x05] + list(data))
             elif (hcmd == "alarm"):
                 cmd(did, _acdevice, 0xd0, ON_DATA)
                 time.sleep(0.2)
@@ -337,9 +427,12 @@ def on_message(client, userdata, msg):
             elif (hcmd == "get_sunrise"):
                 cmd(did, _acdevice, 0xea, [0x08, 0x82])
                 _expectedCallBack = [0xeb, 0x82]
-            elif (mcmd == "get_sunset"):
+            elif (hcmd == "get_sunset"):
                 cmd(did, _acdevice, 0xea, [0x08, 0x83])
                 _expectedCallBack = [0xeb, 0x83]
+            elif (hcmd == "get_astro"):
+                cmd(did, _acdevice, 0xea, [0x08, 0x85])
+                _expectedCallBack = [0xeb, 0x85]
             elif (hcmd == "disconnect"):
                 if _meshconnected:
                     _network.disconnect()
@@ -356,8 +449,7 @@ def on_message(client, userdata, msg):
                 sys.exit(0)								
             elif (hcmd == "settime"):
                 settime(did)
-            elif (hcmd.startswith('raw:')):
-                _,hexdata = hcmd.split(':')
+            elif (hcmd == 'raw'):
                 if hexdata != '':
                     hexlist = list(hexdata[i:i+2] for i in range(0, len(hexdata), 2))
                     c = hexlist[0]
@@ -378,6 +470,7 @@ def checkMeshConnection(acdevice, autoconnect):
     global _expectE1CallBack
     global _callBackCmd
     global _refreshmesh
+    global DEBUG
 
     if DEBUG: print("%s DEBUG: validating mesh connection" % time.strftime('%F %H:%M:%S'))
     if (acdevice >= 0) and autoconnect:
@@ -388,17 +481,24 @@ def checkMeshConnection(acdevice, autoconnect):
             # Device's ded, let's see what's out there again
             _refreshmesh = True
 
-def refreshMesh(autoconnect):
-    global _expectE1CallBack, _refreshmesh
+def refreshMesh(autoconnect, blacklist):
+    global _expectE1CallBack, _refreshmesh, DEBUG
+    global _ldsdevices
+    global MINDISCRSSI
 
     acdevice = -1
     if len(_ldsdevices) > 0:
         maxrssi = MINDISCRSSI
         for d in list(_ldsdevices.values()):
+            if DEBUG: print("%s DEBUG: Inspecting %d" % (time.strftime('%F %H:%M:%S'), d.deviceID))
+            if (d.deviceID == autoconnect) and blacklist:
+                if DEBUG: print("%s DEBUG: Labeling %d as bad" % (time.strftime('%F %H:%M:%S'), autoconnect))
+                d.isBad = True
             if not d.isBad:
                 if d.rssi > maxrssi:
                     maxrssi = d.rssi
                     acdevice = d.deviceID
+                    if DEBUG: print("%s DEBUG: Found good device %d RSSI %d" % (time.strftime('%F %H:%M:%S'), acdevice, d.rssi))
     if acdevice == -1:
         if DEBUG: print("%s DEBUG: Refreshing mesh data" % time.strftime('%F %H:%M:%S'))
         print("Warning: lost contact with ALL devices. Attempting to refresh")
@@ -419,7 +519,7 @@ def listMeshDevices(map, gmap):
     print("Devices and Groups available to control:")
     if map is not None:
         for dev in map:
-            print("[%s] %s" % (dev['deviceId'], dev['deviceName']))
+            print("[%s] %s" % (dev['deviceAddress'], dev['deviceName']))
     if gmap is not None:
         for grp in gmap:
             print("[%s] %s" % (grp['groupId'], grp['groupName']))
@@ -440,9 +540,11 @@ def main():
     global _devices
     global _groups
     global _mqtthub
+    global client
     global MESHPASS, MESHNAME
     global DEBUG
     global VERSION
+    global MAXMISSEDE1CALLBACKS, CALLBACKWAIT, MESHREFRESHPERIOD, MAXMESHCONNFAILS
 
     print("%s INFO: Starting Smartline Flow gateway v%s" % (time.strftime('%F %H:%M:%S'), VERSION))
     print("For MQTT, send message with topic 'sensornet/command'\n")
@@ -495,6 +597,7 @@ def main():
     if DEBUG: print("--- Debug mode ---")
     tmpMeshName = ""
     tmpMeshPass = ""
+    _refreshmesh = False
 
     if (os.path.exists(sharedtxt)):
 #        print("%s INFO: Found plain shared" % time.strftime('%F %H:%M:%S'))
@@ -514,6 +617,12 @@ def main():
             print("%s INFO: Loaded %d devices and %d groups in map file" % (time.strftime('%F %H:%M:%S'), _ldevmap, len(_groups)))
             tmpMeshName = _devmap['space']['meshNetworkName']
             tmpMeshPass = _devmap['space']['meshNetworkPassword']
+            for dev in _devices:
+                s = dev.get('deviceAddress')
+                dH = int(s/256)
+                dL = int((s/256-dH)*256)
+                s = dL*256+dH
+                dev['deviceAddress'] = s
             listMeshDevices(_devices, _groups)
         else:
             print("%s ERROR: Something's wrong, no device included in sharing or decryption failed" % time.strftime('%F %H:%M:%S'))
@@ -539,7 +648,7 @@ def main():
     client.loop_start() #start loop to process received messages
 
     if autoconnect:
-        _acdevice = refreshMesh(autoconnect)
+        _acdevice = refreshMesh(autoconnect, False)
         _meshdevid = _acdevice
         if DEBUG: print("%s DEBUG: Autoconnect device ID: %d" % (time.strftime('%F %H:%M:%S'), _acdevice))
     else:
@@ -550,7 +659,7 @@ def main():
             if DEBUG: print("%s DEBUG: Loaded %s devices from cache" % (time.strftime('%F %H:%M:%S'), _ndev))
         else:
             # Ahem, first time, let's do it the hard way
-            refreshMesh(autoconnect)
+            refreshMesh(autoconnect, False)
         devn = 0
         _meshdevid = 0
         while (devn == 0) or (devn > _ndev) or (_meshdevid == 0):
@@ -586,24 +695,27 @@ def main():
                     if DEBUG: print("%s DEBUG: Periodic mesh ping" % time.strftime('%F %H:%M:%S'))
                     checkMeshConnection(_acdevice, autoconnect)
                     cblt = time.monotonic()
+                if (time.monotonic() - cblt <= CALLBACKWAIT) and _expectE1CallBack:
+                    if _gotE1callback:
+                        cblt = time.monotonic()
+                        if DEBUG: print("%s DEBUG: Got E1 callback" % time.strftime('%F %H:%M:%S'))
+                        _gotE1callback = False
+                        _expectE1CallBack = False
                 if (time.monotonic() - cblt > CALLBACKWAIT) and _expectE1CallBack:
                     cblt = time.monotonic()
                     # We expect to have callback
                     if not _gotE1callback:
                         # Oops, we don't have one
-                        print("%s WARN: Didn't receive any E1 callback" % time.strftime('%F %H:%M:%S'))
+                        print("%s WARN: Didn't receive any E1 callback (%d)" % (time.strftime('%F %H:%M:%S'), missedE1Callbacks))
                         missedE1Callbacks = missedE1Callbacks + 1
                         if (missedE1Callbacks > MAXMISSEDE1CALLBACKS):
                             missedE1Callbacks = 0
                             _refreshmesh = True
-                if (time.monotonic() - cblt <= CALLBACKWAIT) and _expectE1CallBack:
-                        if DEBUG: print("%s DEBUG: Got E1 callback" % time.strftime('%F %H:%M:%S'))
-                        _gotE1callback = False
-                        _expectE1CallBack = False
 
                 if _refreshmesh:
+                    if DEBUG: print("%s DEBUG: Main loop refreshing mesh" % time.strftime('%F %H:%M:%S'))
                     _refreshmesh = False
-                    _acdevice = refreshMesh(autoconnect)
+                    _acdevice = refreshMesh(autoconnect, True)
                     cblt = time.monotonic()
                     lt = cblt
                 pass
