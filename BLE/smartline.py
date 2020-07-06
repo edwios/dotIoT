@@ -60,10 +60,10 @@ ON_DATA = [1,0,0]
 OFF_DATA = [0,0,0]
 MAXMESHCONNFAILS =4		# Max tries before we declare the mesh is not reachable from this device
 MESHREFRESHPERIOD =60	# Update mesh info every minute
-CALLBACKWAIT = 5		# Wait 5s for a callback before we count it missing
+CALLBACKWAIT = 1		# Wait 5s for a callback before we count it missing
 SCANDURATION = 15		# Scan for BLE devices for 20s
 MINDISCRSSI = -100		# Minimum signal strength we consider the device usable for connection
-MAXMISSEDE1CALLBACKS = 2
+MAXMISSEDE1CALLBACKS = 3
 StringType = type("")
 IntegerType = type(9)
 
@@ -130,22 +130,23 @@ def foundLDSdevices(autoconnect=False):
                         dev.seq = count
                         mdata = dev.getValueText(255)
                         sige = mdata.find("0001020304050607")
-                        sigb = sige -4
-                        sigs = mdata[sigb:sige]+"0000"
-                        dev.deviceID = unpack('<i', unhexlify(sigs))[0]
-                        if _ldevmap > 0:
-                            for details in _devices:
-#                                if DEBUG: print("%s DEBUG: Matching ID %d of MAC %s with %s" % (time.strftime('%F %H:%M:%S'), dev.deviceID, dev.addr, toMACString(details['deviceMac'])))
-                                if isBLEMACEqual(dev.addr, toMACString(details['deviceMac'])):
-                                    dev.attr = details
-                                    dev.isBad = False
-                                    if DEBUG: print("%s DEBUG: %s has ID %d" % (time.strftime('%F %H:%M:%S'), dev.attr['deviceName'], dev.deviceID))
-                                    count += 1
-                                    _ldsdevices[count] = dev
-                                    if dev.rssi > maxrssi:
-                                        maxrssi = dev.rssi
-                                        autoconenctID = dev.deviceID
-                                        if DEBUG: print("%s DEBUG: [%s] MAC:%s RSSI: %s ID:%s" % (time.strftime('%F %H:%M:%S'), dev.seq, dev.addr, dev.rssi, dev.deviceID))
+                        if sige >= 4:
+                            sigb = sige -4
+                            sigs = mdata[sigb:sige]+"0000"
+                            dev.deviceID = unpack('<i', unhexlify(sigs))[0]
+                            if _ldevmap > 0:
+                                for details in _devices:
+    #                                if DEBUG: print("%s DEBUG: Matching ID %d of MAC %s with %s" % (time.strftime('%F %H:%M:%S'), dev.deviceID, dev.addr, toMACString(details['deviceMac'])))
+                                    if isBLEMACEqual(dev.addr, toMACString(details['deviceMac'])):
+                                        dev.attr = details
+                                        dev.isBad = False
+                                        if DEBUG: print("%s DEBUG: %s has ID %d" % (time.strftime('%F %H:%M:%S'), dev.attr['deviceName'], dev.deviceID))
+                                        count += 1
+                                        _ldsdevices[count] = dev
+                                        if dev.rssi > maxrssi:
+                                            maxrssi = dev.rssi
+                                            autoconenctID = dev.deviceID
+                                            if DEBUG: print("%s DEBUG: [%s] MAC:%s RSSI: %s ID:%s" % (time.strftime('%F %H:%M:%S'), dev.seq, dev.addr, dev.rssi, dev.deviceID))
 
     _ndev = count
     if _ndev > 0:
@@ -154,7 +155,7 @@ def foundLDSdevices(autoconnect=False):
         except:
             print("%s ERROR: Cannot save presistance dbcache.p" % time.strftime('%F %H:%M:%S'))
         if DEBUG: print("%s DEBUG: %s devices found and saved. Will auto connect to device %s" % (time.strftime('%F %H:%M:%S'), _ndev, autoconenctID))
-    return autoconenctID
+    return int(autoconenctID)
 
 
 def blecallback(mesh, mesg):
@@ -482,7 +483,7 @@ def checkMeshConnection(acdevice, autoconnect):
             _refreshmesh = True
 
 def refreshMesh(autoconnect, blacklist):
-    global _expectE1CallBack, _refreshmesh, DEBUG
+    global _expectE1CallBack, _refreshmesh, _acdevice, DEBUG
     global _ldsdevices
     global MINDISCRSSI
 
@@ -490,9 +491,8 @@ def refreshMesh(autoconnect, blacklist):
     if len(_ldsdevices) > 0:
         maxrssi = MINDISCRSSI
         for d in list(_ldsdevices.values()):
-            if DEBUG: print("%s DEBUG: Inspecting %d" % (time.strftime('%F %H:%M:%S'), d.deviceID))
-            if (d.deviceID == autoconnect) and blacklist:
-                if DEBUG: print("%s DEBUG: Labeling %d as bad" % (time.strftime('%F %H:%M:%S'), autoconnect))
+            if (d.deviceID == _acdevice) and blacklist:
+                if DEBUG: print("%s DEBUG: Labeling %d as bad" % (time.strftime('%F %H:%M:%S'), _acdevice))
                 d.isBad = True
             if not d.isBad:
                 if d.rssi > maxrssi:
