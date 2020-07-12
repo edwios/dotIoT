@@ -79,4 +79,5 @@ fastlane/test_output
 
 _archived_code
 copy2pi.sh
+BLE/copy2pi.sh
 
