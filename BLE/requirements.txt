@@ -2,3 +2,5 @@ paho-mqtt
 rncryptor
 gatt
 bluepy
+pycryptodome
+
