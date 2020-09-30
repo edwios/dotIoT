@@ -34,7 +34,7 @@ import rncryptor
 import threading
 import binascii
 
-VERSION='1.2'
+VERSION='1.3'
 DEBUG = False
 
 MESHNAME = "BLE MESH"
@@ -602,7 +602,9 @@ def main():
     global MAXMISSEDE1CALLBACKS, CALLBACKWAIT, MESHREFRESHPERIOD, MAXMESHCONNFAILS
 
     print("%s INFO: Starting Smartline Flow gateway v%s" % (time.strftime('%F %H:%M:%S'), VERSION))
-    print("For MQTT, send message with topic 'sensornet/command'\n")
+    print("\n")
+    print("For MQTT, send message with topic 'sensornet/command' and message with syntax listed below in MQTT message formats\n")
+    print("Query responses in JSON format are available under the MQTT topic 'sensornet/return'\n")
     print("MQTT message formats:")
     print("    deviceID/command      e.g. 12/on")
     print("    deviceName/command    e.g. Hall light/off")
