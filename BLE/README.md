@@ -20,6 +20,9 @@ There are a few python scripts deveveloped to bring upon this integration. For u
 - leGateway.py
 	This is a simple gateway constructed to gather some data from a BLE device and publish the data through MQTT to the MQTT broker.
 
+- lightshow.py
+	This is a demo to make a RGB device (bulb, LED strip) to continuously change the colour. Note that setting the frequency too high may collapse the Bluetooth mesh. Suggest to have frequency of 2Hz or lower.
+
 ## Smartline Flow Controls
 
 The smartline.py script allows you to interact with and control the Smartline devices.
