@@ -100,7 +100,7 @@ def main():
     DEBUG = args.verbose
     devname = args.devicename
     _mqtthub = args.mqtthost
-    _freq = args.frequency
+    _freq = int(args.frequency)
     initMQTT()
     loopRGB(devname)
 
