@@ -213,7 +213,11 @@ class telink:
     #    def onConnected(self):
 #                print("Debug: all services resolved")
                 self.notification = self.device.getCharacteristics("00010203-0405-0607-0809-0a0b0c0d1911")
-                self.notification.enable_notifications()
+                if self.notification:
+                    self.notification.enable_notifications()
+                else:
+                    print("Exception: device has no notification")
+                    return None
                 self.control = self.device.getCharacteristics("00010203-0405-0607-0809-0a0b0c0d1912")
                 self.pairing = self.device.getCharacteristics("00010203-0405-0607-0809-0a0b0c0d1914")
 
