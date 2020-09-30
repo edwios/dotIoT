@@ -43,6 +43,9 @@ MESHPASS = "000000"
 _ldsdevices = {}
 _devmap = None
 _speciaCmds = ["reset", "terminate", "settime"]
+_rdevstatuses = ["disabled", "enabled"]
+_rastrooffsets = ["before", "after"]
+_rdevactions = ["off", "on"]
 _acdevice = None
 _network = None
 _ndev = 0
@@ -187,8 +190,11 @@ def dumpCallback(scp, mesg):
 def parseCallback(data):
     global _devices, client
     global _callBackCmd, _callBackSubCmd, _expectedCallBack, DEBUG
+    global _rdevstatuses, _rastrooffsets, _rdevactions
     mesg = {}
     cb = data[7]
+    callbackDeviceID = data[4]*256 + data[3]
+    callbackDeviceName = resolveDeviceNameFromID(callbackDeviceID)
     _callBackCmd = cb
     expectedCmd = 0
     expectedSubCmd = 0
@@ -207,7 +213,38 @@ def parseCallback(data):
             sunrise_m_dst = data[17]
             sunset_h_dst = data[18]
             sunset_m_dst = data[19]
-            print("%s INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (time.strftime('%F %H:%M:%S'), sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
+            sunrise_dst = '"' + '{:02d}:{:02d}'.format(sunrise_h_dst, sunrise_m_dst) + '"'
+            sunset_dst = '"' + '{:02d}:{:02d}'.format(sunset_h_dst, sunset_m_dst) + '"'
+            if DEBUG: print("%s INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (time.strftime('%F %H:%M:%S'), sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
+            mesg = {"deviceName":callbackDeviceName, "sunrise":sunrise_dst, "sunset":sunset_dst}
+            jstr = json.dumps(mesg)
+            if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
+            if client:
+                client.publish('sensornet/return', jstr)
+        if cbs == 0x82 or cbs == 0x83:     # Got Sunrise/Sunset time report
+            time_h = data[12]
+            time_m = data[13]
+            if cbs == 0x82:
+                rtype = "Sunrise"
+            if cbs == 0x83:     # Got Sunset time
+                rtype = "Sunset"
+            statusStr = _rdevstatuses[data[14]]
+            actionStr = _rdevactions[data[15]]
+            offsettypeStr = _rastrooffsets[data[16]]
+            offset_h = data[17]
+            offset_m = data[18]
+            offset_hStr = '{:02d} hour'.format(offset_h)
+            offset_mStr = '{:02d} min'.format(offset_m)
+            timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
+            offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
+            if DEBUG: print("%s INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
+            mesg = {"deviceName":callbackDeviceName, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
+            jstr = json.dumps(mesg)
+            if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
+            if client:
+                client.publish('sensornet/return', jstr)
+            
+
     if cb == 0xdc:          # Status report (from 0x1911)
         scp = 0
         _callBackSubCmd = 0
@@ -240,6 +277,16 @@ def parseCallback(data):
                     if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
                     client.publish('sensornet/status', jstr)
                     break
+
+def resolveDeviceNameFromID(did):
+    global _devices
+    dname = "<unknown>"
+    for dev in _devices:
+        if dev.get('deviceAddress') == did:
+            dname = dev.get('deviceName')
+            break
+    return dname
+
 
 def cmd(n, ac, command, data):
     global _network
@@ -417,6 +464,14 @@ def on_message(client, userdata, msg):
                         time.sleep(0.2)
                         data = ct.to_bytes(1, 'big')
                         cmd(did, _acdevice, 0xe2, [0x05] + list(data))
+            elif (hcmd == "rgb"):
+                if hexdata != '':
+                    i = int(hexdata, 16)
+                    if (i > 0xFFFFFF):
+                        print("ERROR: RGB value must be 3 bytes")
+                    else:
+                        data = i.to_bytes(3, 'big')
+                        cmd(did, _acdevice, 0xe2, [0x04] + list(data))
             elif (hcmd == "alarm"):
                 cmd(did, _acdevice, 0xd0, ON_DATA)
                 time.sleep(0.2)
@@ -557,7 +612,10 @@ def main():
     print("\n")
     print("Supported commands:")
     print("    on, off                 -- switch device on or off")
+    print("    dim:n                   -- dim device to n%. 0<=n<=100")
+    print("    rgb:RRGGBB              -- set device colour to RGB hex value")
     print("    alarm, disarm           -- set RGBW/RGBWC bubl to Red or warm white colour")
+    print("    get_astro               -- get the astro timers settings")
     print("    get_sunrise, get_sunset -- get the sunrise or sunset time")
     print("    disconnect              -- disconnect from mesh")
     print("    reset                   -- disconnect and refresh, reconnect to the mesh")
