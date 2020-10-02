@@ -61,7 +61,7 @@ def loopRGB(devname):
     cmdStr = '{:s}/{:s}'.format(devname, 'on')
     sendCmd(cmdStr)
     while(True):
-        for ang in range(0, 360):
+        for ang in range(0, 360, _freq):
             (R, G, B) = getRGB(ang)
             rgbStr = '{:02x}{:02x}{:02x}'.format(R,G,B)
             cmdStr = '{:s}/rgb:{:s}'.format(devname, rgbStr)

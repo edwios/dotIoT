@@ -50,6 +50,7 @@ _acdevice = None
 _network = None
 _ndev = 0
 _gotE1callback = False
+_gotcallback = False
 _expectE1CallBack = False
 _callBackCmd = 0
 _callBackSubCmd = 0
@@ -163,9 +164,10 @@ def foundLDSdevices(autoconnect=False):
 
 def blecallback(mesh, mesg):
     global DEBUG
-    global _gotE1callback, _callBackCmd, _callBackSubCmd, _expectedCallBack, DEBUG
+    global _gotE1callback, _callBackCmd, _callBackSubCmd, _expectedCallBack, _gotcallback, DEBUG
 
     if DEBUG: print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M:%S'), binascii.hexlify(bytearray(mesg))))
+    _gotcallback = True
     _callBackCmd = mesg[7]
     if _callBackCmd == 0xE1:
         _gotE1callback = True
@@ -216,11 +218,11 @@ def parseCallback(data):
             sunrise_dst = '"' + '{:02d}:{:02d}'.format(sunrise_h_dst, sunrise_m_dst) + '"'
             sunset_dst = '"' + '{:02d}:{:02d}'.format(sunset_h_dst, sunset_m_dst) + '"'
             if DEBUG: print("%s INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (time.strftime('%F %H:%M:%S'), sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
-            mesg = {"deviceName":callbackDeviceName, "sunrise":sunrise_dst, "sunset":sunset_dst}
+            mesg = {"deviceName":callbackDeviceName, "deviceID":callbackDeviceID, "sunrise":sunrise_dst, "sunset":sunset_dst}
             jstr = json.dumps(mesg)
             if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
             if client:
-                client.publish('sensornet/return', jstr)
+                client.publish('sensornet/status', jstr)
         if cbs == 0x82 or cbs == 0x83:     # Got Sunrise/Sunset time report
             time_h = data[12]
             time_m = data[13]
@@ -238,11 +240,11 @@ def parseCallback(data):
             timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
             offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
             if DEBUG: print("%s INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
-            mesg = {"deviceName":callbackDeviceName, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
+            mesg = {"deviceName":callbackDeviceName, "deviceID":callbackDeviceID, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
             jstr = json.dumps(mesg)
             if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
             if client:
-                client.publish('sensornet/return', jstr)
+                client.publish('sensornet/status', jstr)
             
 
     if cb == 0xdc:          # Status report (from 0x1911)
@@ -263,7 +265,7 @@ def parseCallback(data):
             for dev in _devices:
                 if dev.get('deviceAddress') == did1:
                     dev_name = dev.get('deviceName')
-                    mesg = {"deviceName":dev_name, "lum":str(lum1), "cct":str(cct1), "msc":str(msc1)}
+                    mesg = {"deviceName":dev_name, "deviceID":did1, "lum":str(lum1), "cct":str(cct1), "msc":str(msc1)}
                     jstr = json.dumps(mesg)
                     if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
                     client.publish('sensornet/status', jstr)
@@ -272,7 +274,7 @@ def parseCallback(data):
             for dev in _devices:
                 if dev.get('deviceAddress') == did2:
                     dev_name = dev.get('deviceName')
-                    mesg = {"deviceName":dev_name, "lum":str(lum2), "cct":str(cct2), "msc":str(msc2)}
+                    mesg = {"deviceName":dev_name, "deviceID":did2, "lum":str(lum2), "cct":str(cct2), "msc":str(msc2)}
                     jstr = json.dumps(mesg)
                     if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
                     client.publish('sensornet/status', jstr)
@@ -289,11 +291,8 @@ def resolveDeviceNameFromID(did):
 
 
 def cmd(n, ac, command, data):
-    global _network
-    global _meshconnected
-    global _refreshmesh
-    global _ldsdevices
-    global _groups
+    global _meshconnected, _refreshmesh
+    global _ldsdevices, _groups, _network
     global DEBUG
 
     psent = False
@@ -396,12 +395,9 @@ def on_publish(client, userdata, result):
 
 # The callback for when a PUBLISH message is received from the broker.
 def on_message(client, userdata, msg):
-    global _lastmqttcmd
+    global _lastmqttcmd, _acdevice
     global _meshconnected, _refreshmesh
-    global _ldsdevices
-    global _groups
-    global _acdevice
-    global _network
+    global _ldsdevices, _groups, _network
     global _expectedCallBack
     global DEBUG
 
@@ -581,30 +577,17 @@ def listMeshDevices(map, gmap):
 
 
 def main():
-    global _ndev
-    global _meshdevid
-    global _ldsdevices
-    global _meshname
-    global _meshpass
-    global _acdevice
-    global _refreshmesh
-    global _gotE1callback
-    global _expectE1CallBack
-    global _devmap
-    global _ldevmap
-    global _devices
-    global _groups
-    global _mqtthub
-    global client
-    global MESHPASS, MESHNAME
-    global DEBUG
-    global VERSION
+    global _ndev, _meshdevid
+    global MESHPASS, MESHNAME, _meshname, _meshpass
+    global _gotE1callback, _gotcallback, _expectE1CallBack, _refreshmesh
+    global _devmap, _ldevmap, _devices, _ldsdevices, _groups, _mqtthub, client, _acdevice
+    global DEBUG, VERSION
     global MAXMISSEDE1CALLBACKS, CALLBACKWAIT, MESHREFRESHPERIOD, MAXMESHCONNFAILS
 
     print("%s INFO: Starting Smartline Flow gateway v%s" % (time.strftime('%F %H:%M:%S'), VERSION))
     print("\n")
     print("For MQTT, send message with topic 'sensornet/command' and message with syntax listed below in MQTT message formats\n")
-    print("Query responses in JSON format are available under the MQTT topic 'sensornet/return'\n")
+    print("Devices statuses and responses are available under the MQTT topic 'sensornet/status' in JSON format\n")
     print("MQTT message formats:")
     print("    deviceID/command      e.g. 12/on")
     print("    deviceName/command    e.g. Hall light/off")
@@ -773,9 +756,16 @@ def main():
                             _refreshmesh = True
 
                 if _refreshmesh:
-                    if DEBUG: print("%s DEBUG: Main loop refreshing mesh" % time.strftime('%F %H:%M:%S'))
-                    _refreshmesh = False
-                    _acdevice = refreshMesh(autoconnect, True)
+                    if not _gotcallback:
+                        # We've got no E1 nor any kind of callback for a while, Sum Ting Wong
+                        if DEBUG: print("%s DEBUG: Main loop refreshing mesh" % time.strftime('%F %H:%M:%S'))
+                        _refreshmesh = False
+                        _gotcallback = False
+                        _acdevice = refreshMesh(autoconnect, True)
+                    else:
+                        # We've got some callback so ignore the absence of E1 until we really have nothing
+                        _refreshmesh = False
+                        _gotcallback = False
                     cblt = time.monotonic()
                     lt = cblt
                 pass
