@@ -45,7 +45,8 @@ _devmap = None
 _speciaCmds = ["reset", "terminate", "settime"]
 _rdevstatuses = ["disabled", "enabled"]
 _rastrooffsets = ["before", "after"]
-_rdevactions = ["off", "on"]
+_rdevactions = ["off", "on", "scene"]
+_ralarmtypes = ["day", "week"]
 _acdevice = None
 _network = None
 _ndev = 0
@@ -192,7 +193,7 @@ def dumpCallback(scp, mesg):
 def parseCallback(data):
     global _devices, client
     global _callBackCmd, _callBackSubCmd, _expectedCallBack, DEBUG
-    global _rdevstatuses, _rastrooffsets, _rdevactions
+    global _rdevstatuses, _rastrooffsets, _rdevactions, _ralarmtypes
     mesg = {}
     cb = data[7]
     callbackDeviceID = data[4]*256 + data[3]
@@ -245,8 +246,6 @@ def parseCallback(data):
             if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
             if client:
                 client.publish('sensornet/status', jstr)
-            
-
     if cb == 0xdc:          # Status report (from 0x1911)
         scp = 0
         _callBackSubCmd = 0
@@ -279,6 +278,41 @@ def parseCallback(data):
                     if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
                     client.publish('sensornet/status', jstr)
                     break
+    if cb == 0xe7:
+        scp = 10
+        cbs = data[scp]
+        _callBackSubCmd = cbs
+        if _callBackCmd == expectedCmd and expectedCmd != 0 and (_callBackSubCmd == expectedSubCmd or expectedSubCmd == 0):
+            _expectedCallBack = []
+        dumpCallback(scp, data)
+        if (cbs == 0xa5):
+            # We have a valid alarm_get() return
+            alrm_index = data[11]
+            alrm_event = data[12]
+            alrm_action = alrm_event & 0x0f
+            alrm_actionStr = _rdevactions[alrm_action]
+            alrm_type = (alrm_event & 0x70) >> 4
+            alrm_typeStr = _ralarmtypes[alrm_type]
+            alrm_status = (alrm_event & 0x80) >> 7
+            alrm_statusStr = _rdevstatuses[alrm_status]
+            alrm_month = data[13]
+            alrm_dayom = data[14]
+            alrm_hour  = data[15]
+            alrm_min   = data[16]
+            alrm_sec   = data[17]
+            alrm_scene = data[18]
+            alrm_hourStr = '{:02d} hour'.format(alrm_hour)
+            alrm_minStr = '{:02d} min'.format(alrm_min)
+            alrm_secStr = '{:02d} sec'.format(alrm_sec)
+            alrm_sceneStr = '{:d}'.format(alrm_scene)
+            alrm_indexStr = '{:d}'.format(alrm_index)
+            timeStr = '{:02d}:{:02d}:{:02d}'.format(alrm_hour, alrm_min, alrm_sec)
+            #if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
+            mesg = {"deviceName":callbackDeviceName, "deviceID":callbackDeviceID, "type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr}
+            jstr = json.dumps(mesg)
+            if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
+            if client:
+                client.publish('sensornet/status', jstr)
 
 def resolveDeviceNameFromID(did):
     global _devices
@@ -407,6 +441,24 @@ def on_message(client, userdata, msg):
     if (topic == "sensornet/command" and payload is not None):
         mqttcmd = str(payload.decode("utf-8"))
         _lastmqttcmd = mqttcmd
+        if '/' not in mqttcmd:
+            if (mqttcmd == "debug"):
+                DEBUG = True
+                return
+            if (mqttcmd == "nodebug"):
+                DEBUG = False
+                return
+            if (mqttcmd == "reset"):
+                if _meshconnected:
+                    _network.disconnect()
+                _meshconnected = False
+                _refreshmesh = True
+                return
+            elif (mqttcmd == "terminate"):
+                if _meshconnected:
+                    _network.disconnect()
+                print("INFO: Received termination command, exiting.")
+                sys.exit(0)
         dids, mhcmd = mqttcmd.split('/')
         mhcmd = mhcmd.lower()
         hexdata = ''
@@ -485,20 +537,19 @@ def on_message(client, userdata, msg):
             elif (hcmd == "get_astro"):
                 cmd(did, _acdevice, 0xea, [0x08, 0x85])
                 _expectedCallBack = [0xeb, 0x85]
+            elif (hcmd == "get_timer"):
+                if (hexdata != ''):
+                    i = int(hexdata)
+                    if (i > 15):
+                        print("ERROR: Only 16 timers")
+                    else:
+                        data = i.to_bytes(1, 'big')
+                        cmd(did, _acdevice, 0xe6, [0x10] + list(data))
+                        _expectedCallBack = [0xe7, 0xa5]
             elif (hcmd == "disconnect"):
                 if _meshconnected:
                     _network.disconnect()
                     _meshconnected = False
-            elif (hcmd == "reset"):
-                if _meshconnected:
-                    _network.disconnect()
-                _meshconnected = False
-                _refreshmesh = True
-            elif (hcmd == "terminate"):
-                if _meshconnected:
-                    _network.disconnect()
-                print("INFO: Received termination command, exiting.")
-                sys.exit(0)								
             elif (hcmd == "settime"):
                 settime(did)
             elif (hcmd == 'raw'):
@@ -589,26 +640,31 @@ def main():
     print("For MQTT, send message with topic 'sensornet/command' and message with syntax listed below in MQTT message formats\n")
     print("Devices statuses and responses are available under the MQTT topic 'sensornet/status' in JSON format\n")
     print("MQTT message formats:")
-    print("    deviceID/command      e.g. 12/on")
-    print("    deviceName/command    e.g. Hall light/off")
-    print("    groupID/command       e.g. 1/off")
-    print("    groupAddress/command  e.g. 32769/on")
-    print("    groupName/command     e.g. Living room/off")
+    print("    deviceID/device_command      e.g. 12/on")
+    print("    deviceName/device_command    e.g. Hall light/off")
+    print("    groupID/device_command       e.g. 1/off")
+    print("    groupAddress/device_command  e.g. 32769/on")
+    print("    groupName/device_command     e.g. Living room/off")
+    print("    command                      e.g. terminate")
     print("\n")
-    print("Supported commands:")
+    print("Supported device_command:")
     print("    on, off                 -- switch device on or off")
     print("    dim:n                   -- dim device to n%. 0<=n<=100")
     print("    rgb:RRGGBB              -- set device colour to RGB hex value")
-    print("    alarm, disarm           -- set RGBW/RGBWC bubl to Red or warm white colour")
+    print("    alarm, disarm           -- set RGBW/RGBWC bulb to Red or warm white colour")
     print("    get_astro               -- get the astro timers settings")
     print("    get_sunrise, get_sunset -- get the sunrise or sunset time")
+    print("    get_timer:n             -- get the n'th timer(s) settings. n=0 for all timers on device")
     print("    disconnect              -- disconnect from mesh")
-    print("    reset                   -- disconnect and refresh, reconnect to the mesh")
-    print("    terminate               -- disconnect and quit")
     print("    settime                 -- set the current time to the device or group")
     print("    raw:ABC                 -- send raw data with command A, callback B and values C to device or group")
     print("                               e.g. PlugA/raw:EAEB0880 send Get_coundown to the device called PlugA")
-    print("\n--help for usages\n")
+    print("\n")
+    print("Supported device_command:")
+    print("    reset                   -- disconnect and refresh, reconnect to the mesh")
+    print("    terminate               -- disconnect and quit")
+    print("\n")
+    print("--help for usages\n")
     parser = argparse.ArgumentParser()
     parser.add_argument("-N", "--meshname", help="Name of the mesh network", default="")
     parser.add_argument("-P", "--meshpass", help="Password of the mesh network", default="")
@@ -657,7 +713,7 @@ def main():
         _groups = _devmap['groups']
         _ldevmap = len(_devices)
         if (_ldevmap > 0):
-            print("%s INFO: Loaded %d devices and %d groups in map file" % (time.strftime('%F %H:%M:%S'), _ldevmap, len(_groups)))
+            print("%s INFO: Loaded %d devices and %d groups from map file" % (time.strftime('%F %H:%M:%S'), _ldevmap, len(_groups)))
             tmpMeshName = _devmap['space']['meshNetworkName']
             tmpMeshPass = _devmap['space']['meshNetworkPassword']
             for dev in _devices:
@@ -778,14 +834,17 @@ def main():
 def toMACString(mac_int):
 #    mac_hex = "{:012x}".format(mac_int)
 #    mac_str = ":".join(mac_hex[i:i+2] for i in range(0, len(mac_hex), 2))
-    mac_hex = "{:08x}".format(mac_int)
-    l = len(mac_hex)
-    mac_str = ":".join(mac_hex[l-i-2:l-i] for i in range(0, len(mac_hex), 2))
-    return mac_str
+    if (':' not in str(mac_int)):
+        mac_hex = "{:08x}".format(mac_int)
+        l = len(mac_hex)
+        mac_str = ":".join(mac_hex[l-i-2:l-i] for i in range(0, len(mac_hex), 2))
+    else:
+        mac_str = str(mac_int)
+    return mac_str.lower()
 
 def isBLEMACEqual(mac1, mac2):
-    mac1s = mac1
-    mac2s = mac2
+    mac1s = mac1.lower()
+    mac2s = mac2.lower()
     if (len(mac1) == 17):
         mac1s = mac1[6:]
     if (len(mac2) == 17):
