@@ -58,6 +58,7 @@ _callBackSubCmd = 0
 _expectedCallBack = []
 _meshconnected = False
 _refreshmesh = False
+_reset = False
 _mqtthub = "127.0.0.1"
 _lastmqttcmd = ""
 _default_passcode = "00000"
@@ -297,6 +298,7 @@ def parseCallback(data):
             alrm_statusStr = _rdevstatuses[alrm_status]
             alrm_month = data[13]
             alrm_dayom = data[14]
+            alrm_dayomStr = '{:08b}'.format(alrm_dayom)
             alrm_hour  = data[15]
             alrm_min   = data[16]
             alrm_sec   = data[17]
@@ -308,11 +310,37 @@ def parseCallback(data):
             alrm_indexStr = '{:d}'.format(alrm_index)
             timeStr = '{:02d}:{:02d}:{:02d}'.format(alrm_hour, alrm_min, alrm_sec)
             #if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
-            mesg = {"deviceName":callbackDeviceName, "deviceID":callbackDeviceID, "type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr}
+            mesg = {"deviceName":callbackDeviceName, "deviceID":callbackDeviceID, "type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr, "alarm_days":alrm_dayomStr}
             jstr = json.dumps(mesg)
             if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
             if client:
                 client.publish('sensornet/status', jstr)
+    if cb == 0xc1:
+        scp = 0     # No subcommand for scene enquiry
+        _callBackSubCmd = 0
+        if _callBackCmd == expectedCmd and expectedCmd != 0 and (_callBackSubCmd == expectedSubCmd or expectedSubCmd == 0):
+            _expectedCallBack = []
+        dumpCallback(scp, data)
+        mesg = {}
+        mesg['deviceName'] = callbackDeviceName
+        mesg['deviceID'] = callbackDeviceID
+        mesg['type'] = 'scene'
+        mesg['scene'] = {}
+        mesg['scene']['index'] = data[10]
+        mesg['scene']['number'] = data[18]
+        mesg['scene']['lum']   = data[11]
+        mesg['scene']['rgb'] = {}
+        mesg['scene']['rgb']['r'] = data[12]
+        mesg['scene']['rgb']['g'] = data[13]
+        mesg['scene']['rgb']['b'] = data[14]
+        mesg['scene']['reserved'] = {}
+        mesg['scene']['reserved']['data0'] = data[15]
+        mesg['scene']['reserved']['data1'] = data[16]
+        mesg['scene']['reserved']['data2'] = data[17]
+        jstr = json.dumps(mesg)
+        if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
+        if client:
+            client.publish('sensornet/status', jstr)
 
 def resolveDeviceNameFromID(did):
     global _devices
@@ -453,12 +481,14 @@ def on_message(client, userdata, msg):
                     _network.disconnect()
                 _meshconnected = False
                 _refreshmesh = True
+                #_reset = True  # Not yet implemented
                 return
             elif (mqttcmd == "terminate"):
                 if _meshconnected:
                     _network.disconnect()
                 print("INFO: Received termination command, exiting.")
                 sys.exit(0)
+                return
         dids, mhcmd = mqttcmd.split('/')
         mhcmd = mhcmd.lower()
         hexdata = ''
@@ -546,6 +576,15 @@ def on_message(client, userdata, msg):
                         data = i.to_bytes(1, 'big')
                         cmd(did, _acdevice, 0xe6, [0x10] + list(data))
                         _expectedCallBack = [0xe7, 0xa5]
+            elif (hcmd == "get_scene"):
+                if (hexdata != ''):
+                    i = int(hexdata)
+                    if (i > 15):
+                        print("ERROR: Only 16 scenes")
+                    else:
+                        data = i.to_bytes(1, 'big')
+                        cmd(did, _acdevice, 0xc0, [0x10] + list(data))
+                        _expectedCallBack = [0xc1, 0x00]
             elif (hcmd == "disconnect"):
                 if _meshconnected:
                     _network.disconnect()
@@ -617,6 +656,7 @@ def refreshMesh(autoconnect, blacklist):
                 _refreshmesh = True
     return acdevice
 
+# Todo: Add JSON return option dewfaulted to False
 def listMeshDevices(map, gmap):
     print("Devices and Groups available to control:")
     if map is not None:
@@ -630,7 +670,7 @@ def listMeshDevices(map, gmap):
 def main():
     global _ndev, _meshdevid
     global MESHPASS, MESHNAME, _meshname, _meshpass
-    global _gotE1callback, _gotcallback, _expectE1CallBack, _refreshmesh
+    global _gotE1callback, _gotcallback, _expectE1CallBack, _refreshmesh, _reset
     global _devmap, _ldevmap, _devices, _ldsdevices, _groups, _mqtthub, client, _acdevice
     global DEBUG, VERSION
     global MAXMISSEDE1CALLBACKS, CALLBACKWAIT, MESHREFRESHPERIOD, MAXMESHCONNFAILS
@@ -698,7 +738,7 @@ def main():
     tmpMeshPass = ""
     _refreshmesh = False
 
-    if (os.path.exists(sharedtxt)):
+    if (os.path.exists(sharedtxt) and not refreshCache):
 #        print("%s INFO: Found plain shared" % time.strftime('%F %H:%M:%S'))
         _devmap = json.load(open(sharedtxt))
     elif os.path.exists(sharedbin):
@@ -718,9 +758,10 @@ def main():
             tmpMeshPass = _devmap['space']['meshNetworkPassword']
             for dev in _devices:
                 s = dev.get('deviceAddress')
-                dH = int(s/256)
-                dL = int((s/256-dH)*256)
-                s = dL*256+dH
+                if s > 255:     # Endian bug in iOS sharing causing device address to become reversed
+                    dH = int(s/256)
+                    dL = int((s/256-dH)*256)
+                    s = dL*256+dH
                 dev['deviceAddress'] = s
             listMeshDevices(_devices, _groups)
         else:
