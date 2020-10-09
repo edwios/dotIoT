@@ -13,11 +13,12 @@ There are a few python scripts deveveloped to bring upon this integration. For u
 
 - smartline.py
 	This is a simple gateway constructed to listen to commands sent over MQTT and translate these commands into appropriate PDU of the Telink mesh, and send it out to the Smartline Flow devices.
-	It can also be used to scan the BLE mesh network for devices to connected to. At the moment, only Telink mesh is supported.
+	Status and various query results of the Smartline Flow devices are also made available over MQTT.
+	At the moment, only Telink mesh is supported.
 	Example usage:
 	    python3 ./smartline.py --shared house -a --mqtthost 127.0.0.1 wait
 
-- leGateway.py
+- leGateway.py (deprecated)
 	This is a simple gateway constructed to gather some data from a BLE device and publish the data through MQTT to the MQTT broker.
 
 - lightshow.py
@@ -25,7 +26,7 @@ There are a few python scripts deveveloped to bring upon this integration. For u
 
 ## Smartline Flow Controls
 
-The smartline.py script allows you to interact with and control the Smartline devices.
+The `smartline.py` script allows you to interact with and control the Smartline devices.
 
 ### Install
 
