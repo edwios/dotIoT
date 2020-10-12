@@ -9,20 +9,32 @@ This is an early trial linking up the Smartline Flow devices with the Telldus pl
 There are a few python scripts deveveloped to bring upon this integration. For usage instructions, run script with option --help :
 
 - httpserver.py
+
 	This script aimed to provide a simple and unsecured HTTP server to receive commands sent from the events created in Telldus Live!. These commands then translated into appropriate MQTT messages and sent to the MQTT broker.
 
 - smartline.py
+
 	This is a simple gateway constructed to listen to commands sent over MQTT and translate these commands into appropriate PDU of the Telink mesh, and send it out to the Smartline Flow devices.
+
 	Status and various query results of the Smartline Flow devices are also made available over MQTT.
 	At the moment, only Telink mesh is supported.
+
 	Example usage:
 	    python3 ./smartline.py --shared house -a --mqtthost 127.0.0.1 wait
 
 - leGateway.py (deprecated)
+
 	This is a simple gateway constructed to gather some data from a BLE device and publish the data through MQTT to the MQTT broker.
 
 - lightshow.py
+
 	This is a demo to make a RGB device (bulb, LED strip) to continuously change the colour. Note that setting the frequency too high may collapse the Bluetooth mesh. Suggest to have frequency of 2Hz or lower.
+
+- decrypt_shared.py
+
+    To both Encrypt (-e) or Decrypt (default) a shared file from either Android or iOS.
+	
+	Note: when composing your own JSON for encryption, ensure "deviceSort" always starts from 0
 
 ## Smartline Flow Controls
 
