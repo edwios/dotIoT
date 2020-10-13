@@ -67,7 +67,7 @@ OFF_DATA = [0,0,0]
 MAXMESHCONNFAILS =4		# Max tries before we declare the mesh is not reachable from this device
 MESHREFRESHPERIOD =60	# Update mesh info every minute
 CALLBACKWAIT = 1		# Wait 5s for a callback before we count it missing
-SCANDURATION = 15		# Scan for BLE devices for 20s
+SCANDURATION = 3		# Scan for BLE devices for 3s
 MINDISCRSSI = -100		# Minimum signal strength we consider the device usable for connection
 MAXMISSEDE1CALLBACKS = 3
 StringType = type("")
@@ -109,15 +109,7 @@ def foundLDSdevices(autoconnect=False):
     scanned = False
     scanner = Scanner().withDelegate(ScanDelegate())
     le_scanned_devices = scanner.scan(SCANDURATION)
-    lt = time.monotonic()
-    while (time.monotonic() - lt < 30) and not scanned:
-        try:
-#            le_scanned_devices = scanner.scan(SCANDURATION)
-            scanned = True
-        except:
-            print("Exception while trying to scan")
-            scanned = False
-            time.sleep(2)
+    scanned = True
     if not scanned:
         print("Fatal error: cannot scan for Bluetooth devices")
         sys.exit(255)
@@ -459,7 +451,7 @@ def on_publish(client, userdata, result):
 def on_message(client, userdata, msg):
     global _lastmqttcmd, _acdevice
     global _meshconnected, _refreshmesh
-    global _ldsdevices, _groups, _network
+    global _ldsdevices, _devices, _groups, _network
     global _expectedCallBack
     global DEBUG
 
@@ -473,15 +465,22 @@ def on_message(client, userdata, msg):
             if (mqttcmd == "debug"):
                 DEBUG = True
                 return
-            if (mqttcmd == "nodebug"):
+            elif (mqttcmd == "nodebug"):
                 DEBUG = False
                 return
-            if (mqttcmd == "reset"):
+            elif (mqttcmd == "reset"):
                 if _meshconnected:
                     _network.disconnect()
                 _meshconnected = False
                 _refreshmesh = True
                 #_reset = True  # Not yet implemented
+                return
+            elif (mqttcmd == "list"):
+                listMeshDevices(_devices, _groups)
+                return
+            elif (mqttcmd == "get_alldevices"):
+                # List all devices to MQTT
+                listMeshDevices(_devices, _groups, toJSON=True)
                 return
             elif (mqttcmd == "terminate"):
                 if _meshconnected:
@@ -657,14 +656,39 @@ def refreshMesh(autoconnect, blacklist):
     return acdevice
 
 # Todo: Add JSON return option dewfaulted to False
-def listMeshDevices(map, gmap):
-    print("Devices and Groups available to control:")
-    if map is not None:
-        for dev in map:
-            print("[%s] %s" % (dev['deviceAddress'], dev['deviceName']))
-    if gmap is not None:
-        for grp in gmap:
-            print("[%s] %s" % (grp['groupId'], grp['groupName']))
+def listMeshDevices(map, gmap, toJSON=False):
+    if toJSON:
+        # List devices in JSON to MQTT
+        if DEBUG: print("%s DEBUG: Listing Devices and Groups to MQTT" % time.strftime('%F %H:%M:%S'))
+        devmap = {}
+        devmap['devices'] = []
+        devmap['groups'] = []
+        if map is not None:
+            for dev in map:
+                d={}
+                if DEBUG: print("%s DEBUG: [%s] %s" % (time.strftime('%F %H:%M:%S'), dev['deviceAddress'], dev['deviceName']))
+                d['address'] = dev['deviceAddress']
+                d['name'] = dev['deviceName']
+                devmap['devices'].append(d)
+        if gmap is not None:
+            for grp in gmap:
+                g={}
+                if DEBUG: print("%s DEBUG: [%s] %s" % (time.strftime('%F %H:%M:%S'), grp['groupId'], grp['groupName']))
+                g['id'] = dev['groupId']
+                g['name'] = dev['groupName']
+                devmap['groups'].append(g)
+        jstr = json.dumps(devmap)
+        if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
+        if client:
+            client.publish('sensornet/status', jstr)
+    else:
+        print("Devices and Groups available to control:")
+        if map is not None:
+            for dev in map:
+                print("[%s] %s" % (dev['deviceAddress'], dev['deviceName']))
+        if gmap is not None:
+            for grp in gmap:
+                print("[%s] %s" % (grp['groupId'], grp['groupName']))
 
 
 def main():
