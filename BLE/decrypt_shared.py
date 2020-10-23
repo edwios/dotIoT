@@ -31,7 +31,7 @@ def encrypt_share(text_file, passcode):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-s", "--shared", help="Shared file (no extension) of device details. Default /tmp/share", default="/tmp/shared.bin")
+    parser.add_argument("-s", "--shared", help="Shared file (no extension) of device details. Default shared", default="shared")
     parser.add_argument("-p", "--passcode", help="Passcode to decrypt shared file. Default "+_default_passcode, default=_default_passcode)
     parser.add_argument("-e", "--encrypt", help="Encrypt instead of decrypt. Default No", action="store_true", default=False)
     args = parser.parse_args()
@@ -39,7 +39,7 @@ def main():
     sharedbase = args.shared
     passcode = args.passcode
     encrypt = args.encrypt
-    sharedbin = sharedbase+".bin"
+    sharedbin = sharedbase+".proove"
     sharedtxt = sharedbase+".json"
     if os.path.exists(sharedbin) and not encrypt:
         decrypted_data = decrypt_share(sharedbin, passcode)

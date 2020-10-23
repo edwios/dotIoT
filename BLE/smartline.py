@@ -735,7 +735,7 @@ def main():
     parser.add_argument("-d", "--did", help="Device to control", type=int, default=1)
     parser.add_argument("-c", "--choose", help="Choose from a list of devices to control", action="store_true")
     parser.add_argument("-a", "--auto", help="Auto connect to mesh upon start", action="store_true", default=True)
-    parser.add_argument("-s", "--shared", help="Shared file (no extension) of device details. Default /tmp/share", default="/tmp/shared.bin")
+    parser.add_argument("-s", "--shared", help="Shared file (no extension) of device details. Default shared", default="shared")
     parser.add_argument("-R", "--refresh", help="Refresh cache. Use when mesh was updated", action="store_true", default=False)
     parser.add_argument("-m", "--mqtthost", help="MQTT host", default='127.0.0.1')
     parser.add_argument("-v", "--verbose", help="Debugly verbose", action="store_true", default=False)
@@ -751,7 +751,7 @@ def main():
     _meshdevid = args.did
     autoconnect = args.auto
     sharedbase = args.shared
-    sharedbin = sharedbase+".bin"
+    sharedbin = sharedbase+".proove"
     sharedtxt = sharedbase+".json"
     choosefromlist = args.choose
     refreshCache = args.refresh
