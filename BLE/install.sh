@@ -5,8 +5,5 @@ echo -e "python3 and pip3 are required or installation will fail.\n"
 echo "Hit <Enter> to continue installation, or ^C to abort."
 read a
 
-sudo apt install mosquitto
-sudo apt install mosquitto-clients
-sudo apt install python3-dbus
-sudo apt install bluez
+sudo apt install -y libglib2.0-dev mosquitto mosquitto-clients python3-dbus bluez
 sudo pip3 install -r requirements.txt
