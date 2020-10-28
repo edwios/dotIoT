@@ -96,7 +96,7 @@ class Peripheral(gatt.Device):
     c_values = {}
     def connect_succeeded(self):
         super().connect_succeeded()
-        self.serviceResolved = True    # Todo: Service need not to be resolved
+        #self.serviceResolved = True    # Todo: Service need not to be resolved
 #        print("[%s] Connected" % (self.mac_address))
 
     def connect_failed(self, error):
