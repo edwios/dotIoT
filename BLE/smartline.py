@@ -34,7 +34,7 @@ import rncryptor
 import threading
 import binascii
 
-VERSION='1.3'
+VERSION='1.5'
 DEBUG = False
 
 MESHNAME = "BLE MESH"
@@ -224,17 +224,22 @@ def parseCallback(data):
                 rtype = "Sunrise"
             if cbs == 0x83:     # Got Sunset time
                 rtype = "Sunset"
-            statusStr = _rdevstatuses[data[14]]
-            actionStr = _rdevactions[data[15]]
-            offsettypeStr = _rastrooffsets[data[16]]
-            offset_h = data[17]
-            offset_m = data[18]
-            offset_hStr = '{:02d} hour'.format(offset_h)
-            offset_mStr = '{:02d} min'.format(offset_m)
-            timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
-            offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
-            if DEBUG: print("%s INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
-            mesg = {"deviceName":callbackDeviceName, "deviceID":callbackDeviceID, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
+            if data[14] != 0xFF:
+                statusStr = _rdevstatuses[data[14]]
+                actionStr = _rdevactions[data[15]]
+                offsettypeStr = _rastrooffsets[data[16]]
+                offset_h = data[17]
+                offset_m = data[18]
+                offset_hStr = '{:02d} hour'.format(offset_h)
+                offset_mStr = '{:02d} min'.format(offset_m)
+                timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
+                offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
+                if DEBUG: print("%s INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
+                mesg = {"deviceName":callbackDeviceName, "deviceID":callbackDeviceID, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
+            else:
+                mesg['deviceName'] = callbackDeviceName
+                mesg['deviceID'] = callbackDeviceID
+                mesg['type'] = 'astro'
             jstr = json.dumps(mesg)
             if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
             if client:
@@ -308,27 +313,46 @@ def parseCallback(data):
             if client:
                 client.publish('sensornet/status', jstr)
     if cb == 0xc1:
-        scp = 0     # No subcommand for scene enquiry
-        _callBackSubCmd = 0
+        scp = 11     # No subcommand for scene enquiry
+        cbs = data[scp]
+        _callBackSubCmd = cbs
         if _callBackCmd == expectedCmd and expectedCmd != 0 and (_callBackSubCmd == expectedSubCmd or expectedSubCmd == 0):
             _expectedCallBack = []
         dumpCallback(scp, data)
         mesg = {}
         mesg['deviceName'] = callbackDeviceName
         mesg['deviceID'] = callbackDeviceID
-        mesg['type'] = 'scene'
-        mesg['scene'] = {}
-        mesg['scene']['index'] = data[10]
-        mesg['scene']['number'] = data[18]
-        mesg['scene']['lum']   = data[11]
-        mesg['scene']['rgb'] = {}
-        mesg['scene']['rgb']['r'] = data[12]
-        mesg['scene']['rgb']['g'] = data[13]
-        mesg['scene']['rgb']['b'] = data[14]
-        mesg['scene']['reserved'] = {}
-        mesg['scene']['reserved']['data0'] = data[15]
-        mesg['scene']['reserved']['data1'] = data[16]
-        mesg['scene']['reserved']['data2'] = data[17]
+        if cbs == 0xe1:
+            idx = data[10]
+            if idx == 1:
+                mesg['type'] = 'usage'
+                mesg['usage'] = {}
+                usage = 256*16*data[15]+256*data[14]+16*data[13]+data[12]
+                energy = (256*16*data[19]+256*data[18]+16*data[17]+data[16])/1000
+                mesg['usage']['usage'] = {'value': usage, 'unit': 'hours'}
+                mesg['usage']['energy'] = {'value': energy, 'unit': 'kWh'}
+            else:
+                mesg['type'] = 'power'
+                mesg['power'] = {}
+                voltage = 256*16*data[15]+256*data[14]+16*data[13]+data[12]
+                current = (256*16*data[19]+256*data[18]+16*data[17]+data[16])/1000
+                mesg['power']['voltage'] = {'value': voltage, 'unit': 'V'}
+                mesg['power']['current'] = {'value': current, 'unit': 'A'}
+                mesg['power']['average_power'] = {'value': round(voltage * current, 1), 'unit': 'W'}
+        else:
+            mesg['type'] = 'scene'
+            mesg['scene'] = {}
+            mesg['scene']['index'] = data[10]
+            mesg['scene']['number'] = data[18]
+            mesg['scene']['lum']   = data[11]
+            mesg['scene']['rgb'] = {}
+            mesg['scene']['rgb']['r'] = data[12]
+            mesg['scene']['rgb']['g'] = data[13]
+            mesg['scene']['rgb']['b'] = data[14]
+            mesg['scene']['reserved'] = {}
+            mesg['scene']['reserved']['data0'] = data[15]
+            mesg['scene']['reserved']['data1'] = data[16]
+            mesg['scene']['reserved']['data2'] = data[17]
         jstr = json.dumps(mesg)
         if DEBUG: print("%s DEBUG: JSON to publish %s" % (time.strftime('%F %H:%M:%S'), jstr))
         if client:
@@ -566,6 +590,9 @@ def on_message(client, userdata, msg):
             elif (hcmd == "get_astro"):
                 cmd(did, _acdevice, 0xea, [0x08, 0x85])
                 _expectedCallBack = [0xeb, 0x85]
+            elif (hcmd == "get_power"):
+                cmd(did, _acdevice, 0xc0, [0x08, 0xe1])
+                _expectedCallBack = [0xc1, 0xe1]
             elif (hcmd == "get_timer"):
                 if (hexdata != ''):
                     i = int(hexdata)
@@ -620,6 +647,7 @@ def checkMeshConnection(acdevice, autoconnect):
             _expectE1CallBack=True 	# Expect call back, if not, device's ded
         else:
             # Device's ded, let's see what's out there again
+            _expectE1CallBack=True 	# Expect call back, if not, device's ded
             _refreshmesh = True
 
 def refreshMesh(autoconnect, blacklist):
@@ -735,7 +763,7 @@ def main():
     parser.add_argument("-d", "--did", help="Device to control", type=int, default=1)
     parser.add_argument("-c", "--choose", help="Choose from a list of devices to control", action="store_true")
     parser.add_argument("-a", "--auto", help="Auto connect to mesh upon start", action="store_true", default=True)
-    parser.add_argument("-s", "--shared", help="Shared file (no extension) of device details. Default shared", default="shared")
+    parser.add_argument("-s", "--shared", help="Shared file (no extension) of device details. Default shared.proove", default="shared.proove")
     parser.add_argument("-R", "--refresh", help="Refresh cache. Use when mesh was updated", action="store_true", default=False)
     parser.add_argument("-m", "--mqtthost", help="MQTT host", default='127.0.0.1')
     parser.add_argument("-v", "--verbose", help="Debugly verbose", action="store_true", default=False)
