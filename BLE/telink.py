@@ -171,6 +171,13 @@ class telink:
 #            print("Debug: Thread starting manager")
             self.manager.run()
 
+    def stopManager(self):
+        if (self.manager is None):
+            print("Error: Device manager not defined!")
+        else:
+#            print("Debug: Thread stopping manager")
+            self.manager.stop()
+
     def set_sk(self, sk):
         self.sk = sk
 

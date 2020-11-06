@@ -65,7 +65,7 @@ _default_passcode = "00000"
 ON_DATA = [1,0,0]
 OFF_DATA = [0,0,0]
 MAXMESHCONNFAILS =4		# Max tries before we declare the mesh is not reachable from this device
-MESHREFRESHPERIOD =60	# Update mesh info every minute
+MESHREFRESHPERIOD =6	# Update mesh info every minute
 CALLBACKWAIT = 1		# Wait 5s for a callback before we count it missing
 SCANDURATION = 3		# Scan for BLE devices for 3s
 MINDISCRSSI = -100		# Minimum signal strength we consider the device usable for connection
@@ -95,13 +95,7 @@ def foundLDSdevices(autoconnect=False):
     global DEBUG
         
     autoconenctID = -1
-    _network = telink.telink(0x0211, None, _meshname, _meshpass, callback=blecallback)
     # Reset bluetooth adaptor
-    if DEBUG: print("%s Debug: Resetting Bluetooth" % time.strftime('%F %H:%M:%S'))
-    _network.manager.is_adapter_powered = False
-    time.sleep(2)
-    _network.manager.is_adapter_powered = True
-    time.sleep(2)
     _network.registerConnectableDevices(SCANDURATION)
 #    if DEBUG: print("%s Debug: Telink devices found: %s " % (time.strftime('%F %H:%M:%S'), _network.devices))
     telink_scanned_devices = _network.devices
@@ -163,10 +157,10 @@ def blecallback(mesh, mesg):
     if DEBUG: print("%s DEBUG: Callback %s" % (time.strftime('%F %H:%M:%S'), binascii.hexlify(bytearray(mesg))))
     _gotcallback = True
     _callBackCmd = mesg[7]
-    if _callBackCmd == 0xE1:
+    if _callBackCmd == 0xdb:
         _gotE1callback = True
     else:
-        _gotE1callback = False
+        _gotE1callback = True
         parseCallback(mesg)
     pass
 
@@ -371,7 +365,7 @@ def resolveDeviceNameFromID(did):
 def cmd(n, ac, command, data):
     global _meshconnected, _refreshmesh
     global _ldsdevices, _groups, _network
-    global DEBUG
+    global DEBUG, SCANDURATION
 
     psent = False
 
@@ -383,25 +377,29 @@ def cmd(n, ac, command, data):
     for dev in list(_ldsdevices.values()):
         if dev.deviceID == ac:
             connectdevice = dev
-    if n >= 0x8000:
+    if n >= 0x8000 and n != 0xFFFF:
         for grp in _groups:
             if grp.get('groupAddress') == n:
                 targetdevice = grp
                 targetdeviceName = targetdevice.get('groupName')
                 target = n
     else:
-        for dev in _devices:
-            if dev.get('deviceAddress') == n:
-                targetdevice = dev
-                targetdeviceName = targetdevice.get('deviceName')
-                target = targetdevice.get('deviceAddress')
-                # Device Address in device map has the HiByte and LowByte reversed
-                # Therefore, to properly use the address to communicate, it must be fixed
-                # Fixing Device Address
-                # tarH = int(target/256)
-                # tarL = int((target/256-tarH)*256)
-                # target = tarL*256+tarH
-    if (targetdevice == None) or (connectdevice == None):
+        if n == 0xFFFF:
+            targetdeviceName = 'All devices'
+            target = n
+        else:
+            for dev in _devices:
+                if dev.get('deviceAddress') == n:
+                    targetdevice = dev
+                    targetdeviceName = targetdevice.get('deviceName')
+                    target = targetdevice.get('deviceAddress')
+                    # Device Address in device map has the HiByte and LowByte reversed
+                    # Therefore, to properly use the address to communicate, it must be fixed
+                    # Fixing Device Address
+                    # tarH = int(target/256)
+                    # tarL = int((target/256-tarH)*256)
+                    # target = tarL*256+tarH
+    if (((targetdevice == None) or (connectdevice == None)) and (n != 0xFFFF)):
         print("Error: cmd error: Missing either target: %s or ac: %s" % (n, ac))
         return False
 #        print("Debug: Wrong target device address ", target)
@@ -418,6 +416,7 @@ def cmd(n, ac, command, data):
         # Therefore, let's give it a few chances
         while (not _meshconnected) and (tries < MAXMESHCONNFAILS):
             if DEBUG: print("%s DEBUG: attempt to connect to %s" % (time.strftime('%F %H:%M:%S'), connectdevice.addr))
+            _network.registerConnectableDevices(SCANDURATION)
             mesh_dev = _network.connect(connectdevice.addr)
             lt = time.monotonic()
             while (time.monotonic() - lt < 5) and (mesh_dev is not None):
@@ -507,11 +506,15 @@ def on_message(client, userdata, msg):
                 listMeshDevices(_devices, _groups, toJSON=True)
                 return
             elif (mqttcmd == "terminate"):
-                if _meshconnected:
-                    _network.disconnect()
+                if _network:
+                    _network.manager.stop()
+                #if _meshconnected:
+                #    _network.disconnect()
                 print("INFO: Received termination command, exiting.")
                 sys.exit(0)
                 return
+            else:
+                return  # Unrecognised command
         dids, mhcmd = mqttcmd.split('/')
         mhcmd = mhcmd.lower()
         hexdata = ''
@@ -635,25 +638,18 @@ def settime(did):
     cmd(0xffff, _acdevice, 0xe4, data)
 
 def checkMeshConnection(acdevice, autoconnect):
-    global _expectE1CallBack
-    global _callBackCmd
-    global _refreshmesh
+    global _expectE1CallBack, _callBackCmd, _refreshmesh
     global DEBUG
 
     if DEBUG: print("%s DEBUG: validating mesh connection" % time.strftime('%F %H:%M:%S'))
     if (acdevice >= 0) and autoconnect:
-        sendok = cmd(acdevice, acdevice, 0xe0, [0xff, 0xff])
-        if sendok:
-            _expectE1CallBack=True 	# Expect call back, if not, device's ded
-        else:
-            # Device's ded, let's see what's out there again
-            _expectE1CallBack=True 	# Expect call back, if not, device's ded
-            _refreshmesh = True
+        cmd(0xffff, acdevice, 0xda, [0x10])
+        _expectE1CallBack=True 	# Expect call back, if not, device's ded
 
 def refreshMesh(autoconnect, blacklist):
-    global _expectE1CallBack, _refreshmesh, _acdevice, DEBUG
+    global _expectE1CallBack, _refreshmesh, _acdevice, _meshconnected
     global _ldsdevices
-    global MINDISCRSSI
+    global DEBUG, MINDISCRSSI
 
     acdevice = -1
     if len(_ldsdevices) > 0:
@@ -667,16 +663,16 @@ def refreshMesh(autoconnect, blacklist):
                     maxrssi = d.rssi
                     acdevice = d.deviceID
                     if DEBUG: print("%s DEBUG: Found good device %d RSSI %d" % (time.strftime('%F %H:%M:%S'), acdevice, d.rssi))
+                    _meshconnected = False
+                    checkMeshConnection(acdevice, autoconnect)
     if acdevice == -1:
         if DEBUG: print("%s DEBUG: Refreshing mesh data" % time.strftime('%F %H:%M:%S'))
         print("Warning: lost contact with ALL devices. Attempting to refresh")
         acdevice = foundLDSdevices(autoconnect)
         if (acdevice >= 0) and autoconnect:
-            sendok = cmd(acdevice, acdevice, 0xe0, [0xff, 0xff])
-            if sendok:
-                _expectE1CallBack=True 	# Expect 0xE1 call back, if not, device's ded
-            else:
-                _refreshmesh = True
+            _meshconnected = False
+            cmd(acdevice, acdevice, 0xe0, [0xff, 0xff])
+            _expectE1CallBack=True 	# Expect 0xE1 call back, if not, device's ded
         else:
             if autoconnect:
                 print("%s ERROR: No auto-connectable device was found" % time.strftime('%F %H:%M:%S'))
@@ -721,7 +717,7 @@ def listMeshDevices(map, gmap, toJSON=False):
 
 def main():
     global _ndev, _meshdevid
-    global MESHPASS, MESHNAME, _meshname, _meshpass
+    global MESHPASS, MESHNAME, _meshname, _meshpass, _network
     global _gotE1callback, _gotcallback, _expectE1CallBack, _refreshmesh, _reset
     global _devmap, _ldevmap, _devices, _ldsdevices, _groups, _mqtthub, client, _acdevice
     global DEBUG, VERSION
@@ -839,6 +835,9 @@ def main():
     client.connect_async(_mqtthub, 1883, 60)
     client.loop_start() #start loop to process received messages
 
+    # Initialise Telink mesh object
+    _network = telink.telink(0x0211, None, _meshname, _meshpass, callback=blecallback)
+
     if autoconnect:
         _acdevice = refreshMesh(autoconnect, False)
         _meshdevid = _acdevice
@@ -887,23 +886,24 @@ def main():
                     if DEBUG: print("%s DEBUG: Periodic mesh ping" % time.strftime('%F %H:%M:%S'))
                     checkMeshConnection(_acdevice, autoconnect)
                     cblt = time.monotonic()
-                if (time.monotonic() - cblt <= CALLBACKWAIT) and _expectE1CallBack:
-                    if _gotE1callback:
+                if _expectE1CallBack:
+                    if (time.monotonic() - cblt > CALLBACKWAIT):
                         cblt = time.monotonic()
-                        if DEBUG: print("%s DEBUG: Got E1 callback" % time.strftime('%F %H:%M:%S'))
-                        _gotE1callback = False
-                        _expectE1CallBack = False
-                if (time.monotonic() - cblt > CALLBACKWAIT) and _expectE1CallBack:
-                    cblt = time.monotonic()
-                    # We expect to have callback
-                    if not _gotE1callback:
-                        # Oops, we don't have one
-                        print("%s WARN: Didn't receive any E1 callback (%d)" % (time.strftime('%F %H:%M:%S'), missedE1Callbacks))
-                        missedE1Callbacks = missedE1Callbacks + 1
-                        if (missedE1Callbacks > MAXMISSEDE1CALLBACKS):
-                            missedE1Callbacks = 0
-                            _refreshmesh = True
-
+                        # We expect to have callback
+                        if not _gotE1callback:
+                            # Oops, we don't have one
+                            print("%s WARN: Didn't receive any E1 callback (%d)" % (time.strftime('%F %H:%M:%S'), missedE1Callbacks))
+                            missedE1Callbacks = missedE1Callbacks + 1
+                            if (missedE1Callbacks > MAXMISSEDE1CALLBACKS):
+                                missedE1Callbacks = 0
+                                _refreshmesh = True
+                    else:
+                        if _gotE1callback:
+                            cblt = time.monotonic()
+                            if DEBUG: print("%s DEBUG: Got E1 callback" % time.strftime('%F %H:%M:%S'))
+                            _gotE1callback = False
+                            _expectE1CallBack = False
+ 
                 if _refreshmesh:
                     if not _gotcallback:
                         # We've got no E1 nor any kind of callback for a while, Sum Ting Wong
@@ -911,12 +911,13 @@ def main():
                         _refreshmesh = False
                         _gotcallback = False
                         _acdevice = refreshMesh(autoconnect, True)
+                        lt = 0  # Force a mesh check
                     else:
                         # We've got some callback so ignore the absence of E1 until we really have nothing
                         _refreshmesh = False
                         _gotcallback = False
+                        lt = time.monotonic()
                     cblt = time.monotonic()
-                    lt = cblt
                 pass
             print("%s FATAL: No device to connect to the mesh, aborted" % time.strftime('%F %H:%M:%S'))
             sys.exit(255)
