@@ -7,6 +7,8 @@ import esp32
 import secrets
 import ujson
 import os
+import ubinascii
+
 
 DEBUG = True    # Global debug printing
 
@@ -285,6 +287,7 @@ def mesh_send_asc(dst: int = 0x00, cmd: int = 0xd0, data: str = None):
 
 def expect_reply(reply='OK'):
     """Expect from serial port some specific incoming"""
+    return True
     rpy = getReply(5)
     if rpy is None:
         return False
@@ -308,7 +311,7 @@ def getReply(timeout=10):
 
     if data is not '':
         # Show the byte as 2 hex digits then in the default way
-        if DEBUG: print("DEBUG: received from BLE module: %s " % data)
+        # if DEBUG: print("DEBUG: received from BLE module: %s " % data)
         reply = []
         lines = data.split('\r\n')
         for line in lines:
@@ -316,6 +319,34 @@ def getReply(timeout=10):
                 reply.append(line)
         if DEBUG: print("DEBUG: received %d lines of text as %s" % (len(reply), reply))
         return reply
+
+
+def check_callbacks():
+    replies = getReply(3)
+    if replies is None:
+        return
+    for reply in replies:
+        if reply.startswith('+DATA'):
+            devaddrstr, lengthstr, callback = reply[6:].split(',')
+            if DEBUG: print("DEBUG: Got call back from %s" % devaddrstr)
+            try:
+                t = ubinascii.unhexlify(devaddrstr)
+            except:
+                devaddr = -1
+            else:
+                devaddr = t[0] * 256 + t[1]
+            try:
+                length = int(lengthstr)
+            except:
+                length = 0
+            if (len(callback) != length) or (length == 0) or (devaddr == -1):
+                print("ERROR: Corrupted callback packet found")
+            else:
+                process_callback(devaddr, callback)
+
+
+def process_callback(devaddr, callback):
+    if DEBUG: print("Processing call back from %04x" % devaddr)
 
 
 def process_command(mqttcmd):
@@ -390,7 +421,72 @@ def process_command(mqttcmd):
                         time.sleep(0.2)
                         data = ct.to_bytes(1, 'big')
                         cmd(did, 0xe2, [0x05] + list(data))
-
+            elif (hcmd == "rgb"):
+                if hexdata != '':
+                    i = int(hexdata, 16)
+                    if (i > 0xFFFFFF):
+                        print("ERROR: RGB value must be 3 bytes")
+                    else:
+                        data = i.to_bytes(3, 'big')
+                        cmd(did, 0xe2, [0x04] + list(data))
+            elif (hcmd == "get_sunrise"):
+                cmd(did, 0xea, [0x08, 0x82])
+                _expectedCallBack = [0xeb, 0x82]
+            elif (hcmd == "get_sunset"):
+                cmd(did, 0xea, [0x08, 0x83])
+                _expectedCallBack = [0xeb, 0x83]
+            elif (hcmd == "get_astro"):
+                cmd(did, 0xea, [0x08, 0x85])
+                _expectedCallBack = [0xeb, 0x85]
+            elif (hcmd == "get_power"):
+                cmd(did, 0xc0, [0x08, 0xe1])
+                _expectedCallBack = [0xc1, 0xe1]
+            elif (hcmd == "get_status"):
+                cmd(did, 0xda, [0x10])
+                _expectedCallBack = [0xdb, 0x00]
+            elif (hcmd == "get_timer"):
+                if (hexdata != ''):
+                    i = int(hexdata)
+                    if (i > 15):
+                        print("ERROR: Only 16 timers")
+                    else:
+                        data = i.to_bytes(1, 'big')
+                        cmd(did, 0xe6, [0x10] + list(data))
+                        _expectedCallBack = [0xe7, 0xa5]
+            elif (hcmd == "get_scene"):
+                if (hexdata != ''):
+                    i = int(hexdata)
+                    if (i > 15):
+                        print("ERROR: Only 16 scenes")
+                    else:
+                        data = i.to_bytes(1, 'big')
+                        cmd(did, 0xc0, [0x10] + list(data))
+                        _expectedCallBack = [0xc1, 0x00]
+            elif (hcmd == 'raw'):
+                if hexdata != '':
+                    hexlist = list(hexdata[i:i+2] for i in range(0, len(hexdata), 2))
+                    try:
+                        t = ubinascii.unhexlify(hexlist[0])
+                        c = int(t[0])
+                    except:
+                        print("ERROR: Illegal op code in raw %s" % hexlist[0])
+                        return
+                    try:
+                        t = ubinascii.unhexlify(hexlist[1])
+                        _expectedCallBack = int(t[0])
+                    except:
+                        print("ERROR: Illegal callback in raw %s" % hexlist[1])
+                        _expectedCallBack = 0
+                    parsstr = hexlist[2:]
+                    pars = []
+                    for par in parsstr:
+                        try:
+                            t = ubinascii.unhexlify(par)
+                            p = int(t[0])
+                        except:
+                            p = 0
+                        pars.append(p)
+                    cmd(did, c, pars)
 
 def cmd(device_addr, op_code, pars):
     """Properly format mesh command before sending to mesh"""
@@ -506,4 +602,4 @@ if DEBUG: print("Entering infinte loop")
 while True:
     # Processes MQTT network traffic, callbacks and reconnections. (Blocking)
     if m_client: m_client.check_msg()
-    getReply(3)
+    check_callbacks()
