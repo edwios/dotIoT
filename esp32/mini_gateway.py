@@ -5,6 +5,7 @@ import network
 import select
 import esp32
 import secrets
+import config
 import ujson
 import os
 import ubinascii
@@ -21,10 +22,13 @@ DEFAULT_DSTADDR = "FFFF"
 DEFAULT_OPCODE  = "D0"
 DEFAULT_PARS    = "010100"
 
-# MQTT_SERVER = '192.168.1.143'  # MQTT Server Address (Change to the IP address of your Pi)
-MQTT_SERVER = '10.0.1.250'  # MQTT Server Address (Change to the IP address of your Pi)
-MQTT_CLIENT_ID = 'BlueSky'
-MQTT_TOPIC = 'sensornet/#'
+MQTT_SERVER = config.MQTT_SERVER
+MQTT_CLIENT_ID = config.MQTT_CLIENT_ID
+MQTT_TOPIC_PREFIX = config.MQTT_TOPIC_PREFIX
+MQTT_SUB_TOPIC_ALL = MQTT_TOPIC_PREFIX + '#'
+MQTT_SUB_TOPIC_CMD = MQTT_TOPIC_PREFIX + 'command'
+MQTT_SUB_TOPIC_CONF = MQTT_TOPIC_PREFIX + 'config'
+MQTT_PUB_TOPIC_STATUS = MQTT_TOPIC_PREFIX + 'status'
 
 CACHEDIR = 'cache'
 DEVICE_CACHE_NAME = 'devices.json'
@@ -32,8 +36,8 @@ MESH_SECRTES_NAME = 'meshsecrets.json'
 Device_Cache = CACHEDIR + '/' + DEVICE_CACHE_NAME
 Mesh_Secrets = CACHEDIR + '/' + MESH_SECRTES_NAME
 
-LED1 = Pin(33)
-LED2 = Pin(32)
+LED1 = config.LED1
+LED2 = config.LED2
 
 ON_DATA = [1, 1, 0]
 OFF_DATA = [0, 1, 0]
@@ -42,8 +46,6 @@ m_WiFi_connected = False
 wifierr = None
 m_client = None
 m_devices = None
-led1 = PWM(Pin(33), freq=20000, duty=1023)
-led2 = PWM(Pin(32), freq=20000, duty=1023)
 Meshname = DEFAULT_MESHNAME
 Meshpass = DEFAULT_MESHPWD
 
@@ -74,11 +76,11 @@ def on_message(topic, msg):
     m = msg.decode("utf-8")
     t = topic.decode("utf-8")
     if DEBUG: print('MQTT received: %s from %s' % (m, t))
-    if (t == 'sensornet/command'):
+    if (t == MQTT_SUB_TOPIC_CMD):
         process_command(m)
-    if (t == 'sensornet/status'):
+    if (t == MQTT_PUB_TOPIC_STATUS):
         process_status(m)
-    if (t == 'sensornet/config'):
+    if (t == MQTT_SUB_TOPIC_CONF):
         process_config(m)
 
 
@@ -90,7 +92,7 @@ def initMQTT():
         return False
     m_client.set_callback(on_message)  # Specify on_message callback
     m_client.connect()   # Connect to MQTT broker
-    m_client.subscribe('sensornet/#')
+    m_client.subscribe(MQTT_SUB_TOPIC_ALL)
     return True
 
 
@@ -552,6 +554,16 @@ def ble_error():
     r.loop(True)
     r.write_pulses((16384, 1, 16384, 16384, 1), start=0)
 
+
+def board_init():
+    global LED1, LED2, led1, led2
+    LED1 = config.LED1
+    LED2 = config.LED2
+    led1 = PWM(LED1, freq=20000, duty=1023)
+    led2 = PWM(LED2, freq=20000, duty=1023)
+
+
+board_init()
 
 if DEBUG: print("Connecting to Wi-Fi")
 m_WiFi_connected = do_connect(SSID, PASS)
