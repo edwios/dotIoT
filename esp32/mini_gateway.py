@@ -25,6 +25,8 @@ DEFAULT_PARS    = "010100"
 MQTT_SERVER = config.MQTT_SERVER
 MQTT_CLIENT_ID = config.MQTT_CLIENT_ID
 MQTT_TOPIC_PREFIX = config.MQTT_TOPIC_PREFIX
+MQTT_USER = secrets.MQTT_USER
+MQTT_PASS = secrets.MQTT_PASS
 MQTT_SUB_TOPIC_ALL = MQTT_TOPIC_PREFIX + '#'
 MQTT_SUB_TOPIC_CMD = MQTT_TOPIC_PREFIX + 'command'
 MQTT_SUB_TOPIC_CONF = MQTT_TOPIC_PREFIX + 'config'
@@ -572,7 +574,7 @@ if m_WiFi_connected:
     if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
     led1.duty(896)
     try:
-        m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER)
+        m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
     except:
         m_client = None
     if not initMQTT():
