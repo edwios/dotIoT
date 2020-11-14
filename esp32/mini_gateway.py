@@ -1,6 +1,6 @@
 import time
 from umqtt.simple import MQTTClient
-from machine import Pin, UART, PWM
+from machine import Pin, UART, PWM, reset
 import network
 import select
 import esp32
@@ -9,6 +9,7 @@ import config
 import ujson
 import os
 import ubinascii
+import sys
 
 
 DEBUG = True    # Global debug printing
@@ -40,12 +41,19 @@ Mesh_Secrets = CACHEDIR + '/' + MESH_SECRTES_NAME
 
 LED1 = config.LED1
 LED2 = config.LED2
+KEY1 = config.KEY1
 
 ON_DATA = [1, 1, 0]
 OFF_DATA = [0, 1, 0]
 
+WAIT_TIME = 5
+
 m_WiFi_connected = False
-wifierr = None
+led1 = None
+led2 = None
+key1 = None
+status_led_1 = None
+status_led_2 = None
 m_client = None
 m_devices = None
 Meshname = DEFAULT_MESHNAME
@@ -539,33 +547,100 @@ def process_config(conf):
 
 
 def wifi_error():
+    global status_led_1
     """Flash LED upon Wi-Fi connection failed"""
-    wifierr = esp32.RMT(0, pin=LED1, clock_div=255)
-    wifierr.loop(True)
-    wifierr.write_pulses((16384, 1, 16384, 16384, 1), start=0)
+    if status_led_1 is not None:
+        status_led_1.deinit()
+    status_led_1 = esp32.RMT(0, pin=LED1, clock_div=255)
+    status_led_1.loop(True)
+    status_led_1.write_pulses((16384, 1, 16384, 16384, 1), start=0)
 
 
 def mqtt_error():
+    global status_led_1
     """Flashes LED upon MQTT connection failure"""
-    wifierr.write_pulses((32767, 1, 32767, 8192, 1), start=1)
+    if status_led_1 is None:
+        status_led_1 = esp32.RMT(0, pin=LED1, clock_div=255)
+        status_led_1.loop(True)
+    status_led_1.write_pulses((32767, 1, 32767, 8192, 1), start=1)
 
 
 def ble_error():
+    global status_led_2
     """Flashes LED upon communication problem with the BLE module"""
-    r = esp32.RMT(1, pin=LED2, clock_div=255)
-    r.loop(True)
-    r.write_pulses((16384, 1, 16384, 16384, 1), start=0)
+    if status_led_2 is not None:
+        status_led_2.deinit()
+    status_led_2 = esp32.RMT(1, pin=LED2, clock_div=255)
+    status_led_2.loop(True)
+    status_led_2.write_pulses((16384, 1, 16384, 16384, 1), start=0)
+
+def exit_mode():
+    global LED1, LED2, status_led_1, status_led_2
+    """Flashes LED upon communication problem with the BLE module"""
+    if status_led_1 is not None:
+        status_led_1.deinit()
+    status_led_1 = esp32.RMT(0, pin=LED1, clock_div=255)
+    status_led_1.loop(True)
+    status_led_1.write_pulses((16384, 1, 16384, 16384, 1), start=0)
+    if status_led_2 is not None:
+        status_led_2.deinit()
+    status_led_2 = esp32.RMT(1, pin=LED2, clock_div=255)
+    status_led_2.loop(True)
+    status_led_2.write_pulses((16384, 1, 16384, 16384, 1), start=0)
 
 
 def board_init():
-    global LED1, LED2, led1, led2
-    LED1 = config.LED1
-    LED2 = config.LED2
+    global LED1, LED2, KEY1, led1, led2, key1
+    KEY1.init(mode=Pin.IN, pull=Pin.PULL_UP)
+    key1 = KEY1
     led1 = PWM(LED1, freq=20000, duty=1023)
     led2 = PWM(LED2, freq=20000, duty=1023)
 
 
+def check_reset():
+    if key1.value() == 0:
+        time.sleep(0.2)
+        reset()
+
 board_init()
+LED1.init(mode=Pin.OUT)
+LED1.value(0)
+
+t = time.time()
+released = False
+if key1.value() == 0:
+    while (time.time() - t < WAIT_TIME):
+        if (key1.value() == 1):
+            released = True
+            break
+    if not released:
+        exit_mode()
+        m_WiFi_connected = do_connect(SSID, PASS)
+        time.sleep(3)
+        if status_led_1 is not None:
+            status_led_1.loop(False)
+            status_led_1.deinit()
+        if status_led_2 is not None:
+            status_led_2.loop(False)
+            status_led_2.deinit()
+        LED1.init(mode=Pin.OUT)
+        LED1.value(1)
+        LED2.init(mode=Pin.OUT)
+        LED2.value(1)
+        if led1 is not None:
+            led1.deinit()
+        if led2 is not None:
+            led2.deinit()
+        led1 = PWM(LED1, freq=20000, duty=768)
+        led2 = PWM(LED2, freq=20000, duty=1023)
+        sys.exit(0)
+if led1 is not None:
+    led1.deinit()
+led1 = PWM(LED1, freq=20000, duty=900)
+
+if released:
+    """Button pressed during boot, change to config #2"""
+    if DEBUG: print("DEBUG: Switch to alt config")
 
 if DEBUG: print("Connecting to Wi-Fi")
 m_WiFi_connected = do_connect(SSID, PASS)
@@ -617,3 +692,4 @@ while True:
     # Processes MQTT network traffic, callbacks and reconnections. (Blocking)
     if m_client: m_client.check_msg()
     check_callbacks()
+    check_reset()
