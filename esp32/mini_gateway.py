@@ -351,8 +351,9 @@ def check_callbacks():
                 length = int(lengthstr)
             except:
                 length = 0
-            if (len(callback) != length) or (length == 0) or (devaddr == -1):
+            if (len(callback) != length * 2) or (length == 0) or (devaddr == -1):
                 print("ERROR: Corrupted callback packet found")
+                process_callback(devaddr, callback)
             else:
                 process_callback(devaddr, callback)
 
@@ -503,7 +504,7 @@ def process_command(mqttcmd):
 def cmd(device_addr, op_code, pars):
     """Properly format mesh command before sending to mesh"""
     if DEBUG: print("Sending to %s op code %s and pars %s" % (device_addr, op_code, pars))
-    Dstdev = '{:d}'.format(device_addr)
+    Dstdev = '{:04x}'.format(device_addr)
     Opcode = '{:02x}'.format(op_code)
     Params = ''
     for i in pars:
@@ -641,6 +642,26 @@ led1 = PWM(LED1, freq=20000, duty=900)
 if released:
     """Button pressed during boot, change to config #2"""
     if DEBUG: print("DEBUG: Switch to alt config")
+    import config_alt
+    import secrets_alt
+
+    DEFAULT_MESHNAME = secrets_alt.DEFAULT_MESHNAME
+    DEFAULT_MESHPWD = secrets_alt.DEFAULT_MESHPWD
+    SSID = secrets_alt.SSID
+    PASS = secrets_alt.PASS
+    MQTT_SERVER = config_alt.MQTT_SERVER
+    MQTT_CLIENT_ID = config_alt.MQTT_CLIENT_ID
+    MQTT_TOPIC_PREFIX = config_alt.MQTT_TOPIC_PREFIX
+    try:
+        MQTT_USER = secrets_alt.MQTT_USER
+    except:
+        MQTT_USER = None
+    try:
+        MQTT_PASS = secrets_alt.MQTT_PASS
+    except:
+        MQTT_PASS = None
+
+
 
 if DEBUG: print("Connecting to Wi-Fi")
 m_WiFi_connected = do_connect(SSID, PASS)
