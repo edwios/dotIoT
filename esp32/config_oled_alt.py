@@ -5,7 +5,7 @@ MQTT_SERVER = '10.0.1.250'
 #MQTT_SERVER = '192.168.1.143'
 
 # MQTT client config
-MQTT_CLIENT_ID = 'BlueSky'
+MQTT_CLIENT_ID = 'BleuSky'
 MQTT_TOPIC = 'sensornet/#'
 MQTT_TOPIC_PREFIX = 'sensornet/'
 
