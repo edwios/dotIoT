@@ -5,7 +5,7 @@ import network
 import select
 import esp32
 import secrets
-import config_oled as config
+import config_xmas_lights as config
 import ujson
 import os
 import ubinascii
