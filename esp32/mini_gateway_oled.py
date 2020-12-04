@@ -15,6 +15,7 @@ import nunito_r
 import ostrich_r
 import font6
 import ssd1306
+import json
 #import esp
 #esp.osdebug(None)
 #import gc
@@ -40,6 +41,9 @@ MQTT_SUB_TOPIC_ALL = MQTT_TOPIC_PREFIX + '#'
 MQTT_SUB_TOPIC_CMD = MQTT_TOPIC_PREFIX + 'command'
 MQTT_SUB_TOPIC_CONF = MQTT_TOPIC_PREFIX + 'config'
 MQTT_PUB_TOPIC_STATUS = MQTT_TOPIC_PREFIX + 'status'
+MQTT_SUB_TOPIC_HASS_PREFIX = MQTT_TOPIC_PREFIX + 'hass/'
+MQTT_SUB_TOPIC_HASS_SET = MQTT_SUB_TOPIC_HASS_PREFIX + '+/set'
+MQTT_PUB_TOPIC_HASS_PREFIX = MQTT_TOPIC_PREFIX + 'hass/'
 
 CACHEDIR = 'cache'
 DEVICE_CACHE_NAME = 'devices.json'
@@ -116,6 +120,8 @@ def on_message(topic, msg):
         process_status(m)
     if (t == MQTT_SUB_TOPIC_CONF):
         process_config(m)
+    if (t.startswith(MQTT_SUB_TOPIC_HASS_PREFIX)):
+        process_hass(t, m)
 
 
 def initMQTT():
@@ -130,6 +136,7 @@ def initMQTT():
     m_client.subscribe(MQTT_SUB_TOPIC_CMD)
     m_client.subscribe(MQTT_PUB_TOPIC_STATUS)
     m_client.subscribe(MQTT_SUB_TOPIC_CONF)
+    m_client.subscribe(MQTT_SUB_TOPIC_HASS_SET)
     return True
 
 
@@ -228,6 +235,7 @@ def retrieveMeshSecrets(def_name=DEFAULT_MESHNAME, def_pass=DEFAULT_MESHPWD, cac
         meshsecrets = ujson.loads(jj)
         filep.close()
     return meshsecrets
+
 
 def refresh_devices(config, cache_path):
     """Refresh devices from configuration received"""
@@ -419,31 +427,65 @@ def process_callback(devaddr, callback):
     if DEBUG: print("Processing call back from %04x" % devaddr)
     name = rev_lookup_device(devaddr)
     if name is None:
+        print("ERROR: process_callback(): cannot find device name with address %d" % devaddr)
         return
     opcode = callback[:2]
     if opcode == 'DC':
         # Status notify report
+        if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
         topic = MQTT_PUB_TOPIC_STATUS
         par1 = callback[2:4]
         par2 = callback[4:6]
-        try:
-            bgt = ubinascii.unhexlify(par1)[0]
-        except:
-            bgt = 0
-        try:
-            cct = ubinascii.unhexlify(par2)[0]
-        except:
-            cct = 0
-        state = 'on'
-        if bgt == 0:
-            state = 'off'
-        mesg = '"device_name":"{:s}", "state":"{:s}", "brightness":{:d}, "cct":{:d}'.format(name, state, bgt, cct)
+        bgt = None
+        state = None
+        if par1 != '':
+            try:
+                bgt = ubinascii.unhexlify(par1)[0]
+            except:
+                bgt = 0
+            if bgt > 0:
+                state = 'on'
+            else:
+                state = 'off'
+        cct = None
+        if par2 != '':
+            try:
+                cct = ubinascii.unhexlify(par2)[0]
+            except:
+                cct = 0
+        mesg = '"device_name":"{:s}"'.format(name)
+        if bgt is not None:
+            mesg = mesg + ', "state":"{:s}", "brightness":{:d}'.format(state, bgt)
+        if cct is not None:
+            mesg = mesg + ', "cct":{:d}'.format(cct)
         mesg = '{' + mesg + '}'
         if m_client:
             m_client.publish(topic, mesg.encode('utf-8'))
+        update_hass(name, state, bgt, cct)
     else:
         if DEBUG: print("Unsupported call back opcode %s" % opcode)
         return
+
+
+def update_hass(name, state, brightness, cct):
+    global DEBUG, m_client, MQTT_PUB_TOPIC_HASS_PREFIX
+    if DEBUG: print("update_hass(): Pub status for %s" % (name))
+    hass_state_topic = MQTT_PUB_TOPIC_HASS_PREFIX + name
+    hass_mesg = '"device_name":"{:s}"'.format(name)
+    if state is not None:
+        hass_mesg = hass_mesg + ',"state":"{:s}"'.format(state.upper())
+    if brightness is not None:
+        hass_mesg = hass_mesg + ',"brightness":{:d}'.format(brightness)
+    if cct is not None:
+        hasscct = cct
+        if cct <= 100:
+            cct = 100 - cct
+            hasscct = int(cct * 347 / 100 + 153)
+        hass_mesg = hass_mesg + ',"color_temp":{:d}'.format(hasscct)
+    hass_mesg = '{' + hass_mesg + '}'
+    if DEBUG: print("update_hass(): Pub mesg: %s" % hass_mesg)
+    if m_client:
+        m_client.publish(hass_state_topic, hass_mesg.encode('utf-8'))
 
 
 def process_command(mqttcmd):
@@ -585,6 +627,137 @@ def process_command(mqttcmd):
                             p = 0
                         pars.append(p)
                     cmd(did, c, pars)
+
+
+def process_hass(topic, msg):
+    global DEBUG
+    if DEBUG: print("Process HASS command %s at topic %s" % (msg, topic))
+    ts = topic.split('/')
+    if ts is None:
+        # We don't handle topics without '/'
+        print("ERROR: process_hass(): Topic has no '/'")
+        return
+    if ts[-1:][0] != 'set':
+        # We don't handle here non-set topics
+        print("ERROR: process_hass(): Topic is not ended with 'set' (%s)" % ts[-1:][0])
+        return
+    device_name = ts[-2:][0]
+    if device_name == '' or device_name == 'hass':
+        # Missing device name, we don't handle either
+        print("ERROR: process_hass(): Topic does not contain device name (%s)" % device_name)
+        return
+    if device_name is not None:
+        if DEBUG: print("HASS control of device %s" % device_name)
+        try:
+            mqtt_json = json.loads(msg)
+        except:
+            print("ERROR: JSON format error")
+            return
+        try:
+            state = mqtt_json['state']
+        except:
+            state = None
+        else:
+            state = state.lower()
+        try:
+            brightness = mqtt_json['brightness']
+        except:
+            brightness = None
+        try:
+            cct = mqtt_json['color_temp']
+        except:
+            cct = None
+        try:
+            color = mqtt_json['color']
+        except:
+            color = None
+        hexdata = ''
+        did = 0
+        try:
+            did = int(device_name)
+        except:
+            did = lookup_device(device_name)
+        else:
+            device_name = rev_lookup_device(did)
+        if DEBUG: print("HASS control %s for state: %s, brightness %s, cct: %s, color: %s" % (device_name, state, brightness, cct, color))
+        if (did > 0):
+            if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s" % (msg, did))
+            if (state == "on"):
+                cmd(did, 0xd0, ON_DATA)
+            if (state == "off"):
+                cmd(did, 0xd0, OFF_DATA)
+            if (brightness is not None):
+                hexdata = brightness
+                try:
+                    # Make sure we are dealing with int not string
+                    i = int(hexdata)
+                except:
+                    i = 5
+                if (i > 100 or i < 0):
+                    print("ERROR: Lumnance value must be between 0 and 100")
+                else:
+                    data = i.to_bytes(1, 'big')
+                    cmd(did, 0xd2, list(data))
+            if (cct is not None):
+                hexdata = cct
+                ct = 0
+                try:
+                    # Make sure we are dealing with int not string
+                    i = int(hexdata)
+                except:
+                    i = 0
+                if i > 100:
+                    if (i >= 153) and (i <= 500):
+                        # We've got HASS color temp
+                        ct = int(100 * (i - 153)/347)
+                        ct = 100 - ct
+                    # We've got Kelvin
+                    elif (i < 1800 or i > 6500):
+                        print("ERROR: CCT value must be between 1800K and 6500K")
+                        return
+                    else:
+                        ct = int(100 * (i - 2700)/3800)
+                else:
+                    ct = i
+                if ct < 0:
+                    ct = 0
+                if ct > 100:
+                    ct = 100
+                i = int(ct * 3800 / 100 + 2700)
+                data = i.to_bytes(2, 'big')
+                cmd(did, 0xf5, [0x10] + list(data))
+                time.sleep(0.2)
+                data = ct.to_bytes(1, 'big')
+                cmd(did, 0xe2, [0x05] + list(data))
+            if (color is not None):
+                try:
+                    cr = color['r']
+                    cg = color['g']
+                    cb = color['b']
+                    r = int(cr)
+                    g = int(cg)
+                    b = int(cb)
+                except:
+                    print("ERROR: Malformed RGB colour in JSON")
+                    return
+                if (r > 255) or (g > 255) or (b > 255) or (r < 0) or (g < 0) or (b < 0):
+                    print("ERROR: RGB colour values outside of 0..255")
+                    return
+                hexdata = '{:02X}'.format(r) + '{:02X}'.format(g) + '{:02X}'.format(b)
+                if hexdata != '':
+                    i = int(hexdata, 16)
+                    if (i > 0xFFFFFF):
+                        print("ERROR: RGB value must be 3 bytes")
+                        return
+                    else:
+                        data = i.to_bytes(3, 'big')
+                        cmd(did, 0xe2, [0x04] + list(data))
+            hassct = None
+            if cct is not None:
+                ct = 100 - ct
+                hassct = int(ct * 347 / 100 + 153)
+            update_hass(device_name, state, brightness, hassct)
+
 
 def cmd(device_addr, op_code, pars):
     """Properly format mesh command before sending to mesh"""
