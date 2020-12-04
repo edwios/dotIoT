@@ -110,6 +110,7 @@ def do_connect(ssid, pwd):
 
 def on_message(topic, msg):
     """Callback for MQTT published messages """
+    global DEBUG, MQTT_SUB_TOPIC_CMD, MQTT_PUB_TOPIC_STATUS, MQTT_SUB_TOPIC_CONF
     m = msg.decode("utf-8")
     t = topic.decode("utf-8")
     if DEBUG: print('MQTT received: %s from %s' % (m, t))
@@ -123,7 +124,7 @@ def on_message(topic, msg):
 
 def initMQTT():
     """Initialise MQTT client and connect to the MQTT broker. """
-    global m_client
+    global m_client, MQTT_SUB_TOPIC_ALL
     if not m_client:
         print("ERROR: No MQTT connection to init for")
         return False
@@ -135,6 +136,7 @@ def initMQTT():
 
 def _send_command(cmd: str = 'AT'):
     """Internal method to send AT commands to BLE module appending 0D0A to the end"""
+    global DEBUG, STATUS_TO_MESH
     if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
     print_status(STATUS_TO_MESH)
     m_uart.write(cmd)
@@ -254,6 +256,7 @@ def refresh_devices(config, cache_path):
 
 def retrieveDeviceDB(cache_path):
     """Restore device from DB"""
+    global DEBUG
     if DEBUG: print("Retrieving devices from cache %s" % cache_path)
     devices = None
     try:
@@ -270,7 +273,7 @@ def retrieveDeviceDB(cache_path):
 
 def lookup_device(name):
     """Look up the device's address from the given name"""
-    global m_devices
+    global m_devices, DEBUG
     devaddr = 0
     if m_devices is None or name == '':
         return devaddr
@@ -295,7 +298,7 @@ def lookup_device(name):
 
 def rev_lookup_device(devaddr):
     """Look up the device's address from the given name"""
-    global m_devices
+    global m_devices, DEBUG
     name = None
     if m_devices is None or devaddr == 0:
         return name
@@ -335,6 +338,7 @@ def mesh_send(dst=0x00, cmd=0xd0, data=[]):
 
 
 def mesh_send_asc(dst: int = 0x00, cmd: int = 0xd0, data: str = None):
+    global DEBUG
     """Send to mesh using hexified ASCII string as the data
         dst:    Device address (2 bytes)
         cmd:    Op code (1 byte)
@@ -365,6 +369,7 @@ def expect_reply(reply='OK'):
 
 
 def getReply(timeout=10):
+    global DEBUG, m_uart, poll
     """Check for serial port incoming"""
     events = poll.poll(timeout)
     data = ''
@@ -389,6 +394,7 @@ def getReply(timeout=10):
 
 
 def check_callbacks():
+    global DEBUG, STATUS_FROM_MESH
     replies = getReply(3)
     if replies is None:
         return
@@ -415,7 +421,7 @@ def check_callbacks():
 
 
 def process_callback(devaddr, callback):
-    global m_client, DEBUG
+    global m_client, DEBUG, MQTT_PUB_TOPIC_STATUS
     if DEBUG: print("Processing call back from %04x" % devaddr)
     name = rev_lookup_device(devaddr)
     if name is None:
@@ -447,6 +453,7 @@ def process_callback(devaddr, callback):
 
 
 def process_command(mqttcmd):
+    global oled, DEBUG
     """Process mesh commands received from MQTT
         MQTT commands take forms:
             {"command", "state", "brightness", "color_temp", "white_value", "rgb", "raw", "value"}
@@ -487,7 +494,13 @@ def process_command(mqttcmd):
                 return
             elif (mqttcmd == "clear_all"):
                 clear_neo()
-                return                
+                return
+            elif (mqttcmd == "display_on"):
+                oled.poweron()
+                return
+            elif (mqttcmd == "display_off"):
+                oled.poweroff()
+                return
             else:
                 return
     if True:
@@ -601,6 +614,7 @@ def process_command(mqttcmd):
 
 
 def cmd(device_addr, op_code, pars):
+    global DEBUG
     """Properly format mesh command before sending to mesh"""
     if DEBUG: print("Sending to %s op code %s and pars %s" % (device_addr, op_code, pars))
     Dstdev = '{:04x}'.format(device_addr)
@@ -613,10 +627,12 @@ def cmd(device_addr, op_code, pars):
 
 def process_status(status):
     """Process statuses received from Mesh"""
+    global DEBUG
     if DEBUG: print("Process status %s" % status)
 
 
 def process_config(conf):
+    global DEBUG
     """Process configuration updates from Mesh or WiFi
 
         The configuration is expected to be a decrypted JSON containing one or more of the followings:
@@ -648,25 +664,25 @@ def process_config(conf):
 
 
 def wifi_error():
-    global status_led_1
+    global status_led_1, WIFI_ERROR_FLAG
     """Flash LED upon Wi-Fi connection failed"""
     print_status(WIFI_ERROR_FLAG)
 
 
 def mqtt_error():
-    global status_led_1
+    global status_led_1, MQTT_ERROR_FLAG
     """Flashes LED upon MQTT connection failure"""
     print_status(MQTT_ERROR_FLAG)
 
 
 def ble_error():
-    global status_led_2
+    global status_led_2, BT_ERROR_FLAG
     """Flashes LED upon communication problem with the BLE module"""
     print_status(BT_ERROR_FLAG)
 
 
 def exit_mode():
-    global LED1, LED2, status_led_1, status_led_2
+    global LED1, LED2, status_led_1, status_led_2, EXIT_FLAG, SSID, PASS, m_WiFi_connected
     """Exit willingly"""
     m_WiFi_connected = do_connect(SSID, PASS) # If we want webrepl afterwards
     print_status(EXIT_FLAG)
@@ -685,6 +701,7 @@ def board_init():
 
 
 def clear_neo():
+    global neo1, N_NEO
     # Clear lightstrip
     if neo1 is not None:
         for i in range(N_NEO):
@@ -721,15 +738,17 @@ def check_reset():
 
 
 def displayInit():
-  oled.fill(0)
-  # oled.text(String,X-pixels,y-Pixels)
-  wri_m.set_textpos(oled, 0, 0)  # verbose = False to suppress console output
-  wri_m.printstring('XMas Light')
-  # Show on display
-  oled.show()
+    global oled, wri_m
+    oled.fill(0)
+    # oled.text(String,X-pixels,y-Pixels)
+    wri_m.set_textpos(oled, 0, 0)  # verbose = False to suppress console output
+    wri_m.printstring('XMas Light')
+    # Show on display
+    oled.show()
 
 
 def print_progress(msg):
+    global oled, wri_m
     wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
     wri_m.printstring("                            ")
     wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
@@ -738,7 +757,7 @@ def print_progress(msg):
 
 
 def print_status(statusflag):
-    global m_systemstatus
+    global m_systemstatus, wri_m, oled, DEBUG
     m_systemstatus = m_systemstatus | statusflag
     st = m_systemstatus
     if st == 0 or st == 0x80:
@@ -766,6 +785,7 @@ def print_status(statusflag):
     wri_m.set_textpos(oled, 50, 0)  # verbose = False to suppress console output
     wri_m.printstring(msg)
     oled.show()
+
 
 i2c = I2C(scl=Pin(4), sda=Pin(5))
 oled = ssd1306.SSD1306_I2C(128, 64, i2c)
