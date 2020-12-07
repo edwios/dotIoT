@@ -402,24 +402,28 @@ def check_callbacks():
         return
     for reply in replies:
         if reply.startswith('+DATA'):
-            devaddrstr, lengthstr, callback = reply[6:].split(',')
-            if DEBUG: print("DEBUG: Got call back from %s" % devaddrstr)
-            print_status(STATUS_FROM_MESH)
             try:
-                t = ubinascii.unhexlify(devaddrstr)
+                devaddrstr, lengthstr, callback = reply[6:].split(',')
             except:
-                devaddr = -1
-            else:
-                devaddr = t[0] * 256 + t[1]
-            try:
-                length = int(lengthstr)
-            except:
-                length = 0
-            if (len(callback) != length * 2) or (length == 0) or (devaddr == -1):
-                print("ERROR: Corrupted callback packet found")
-                process_callback(devaddr, callback)
-            else:
-                process_callback(devaddr, callback)
+                devaddrstr = None
+            if devaddrstr is not None:
+                if DEBUG: print("DEBUG: Got call back from %s" % devaddrstr)
+                print_status(STATUS_FROM_MESH)
+                try:
+                    t = ubinascii.unhexlify(devaddrstr)
+                except:
+                    devaddr = -1
+                else:
+                    devaddr = t[0] * 256 + t[1]
+                try:
+                    length = int(lengthstr)
+                except:
+                    length = 0
+                if (len(callback) != length * 2) or (length == 0) or (devaddr == -1):
+                    print("ERROR: Corrupted callback packet found")
+                    process_callback(devaddr, callback)
+                else:
+                    process_callback(devaddr, callback)
 
 
 def process_callback(devaddr, callback):
