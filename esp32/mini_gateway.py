@@ -1,18 +1,32 @@
+DEBUG = True    # Global debug printing
+USEOLED = False
+
 import time
 from umqtt.simple import MQTTClient
-from machine import Pin, UART, PWM, reset
+from machine import Pin, UART, PWM, reset, I2C
 import network
 import select
 import esp32
 import secrets
-import config
+if USEOLED:
+    import config_oled as config
+    from writer import Writer
+    import nunito_r
+    import ostrich_r
+    import font6
+    import ssd1306
+else:
+    import config as config
 import ujson
 import os
 import ubinascii
 import sys
+import json
+#import esp
+#esp.osdebug(None)
+#import gc
+#gc.collect()
 
-
-DEBUG = True    # Global debug printing
 
 DEFAULT_MESHNAME = secrets.DEFAULT_MESHNAME
 DEFAULT_MESHPWD = secrets.DEFAULT_MESHPWD
@@ -32,6 +46,9 @@ MQTT_SUB_TOPIC_ALL = MQTT_TOPIC_PREFIX + '#'
 MQTT_SUB_TOPIC_CMD = MQTT_TOPIC_PREFIX + 'command'
 MQTT_SUB_TOPIC_CONF = MQTT_TOPIC_PREFIX + 'config'
 MQTT_PUB_TOPIC_STATUS = MQTT_TOPIC_PREFIX + 'status'
+MQTT_SUB_TOPIC_HASS_PREFIX = MQTT_TOPIC_PREFIX + 'hass/'
+MQTT_SUB_TOPIC_HASS_SET = MQTT_SUB_TOPIC_HASS_PREFIX + '+/set'
+MQTT_PUB_TOPIC_HASS_PREFIX = MQTT_TOPIC_PREFIX + 'hass/'
 
 CACHEDIR = 'cache'
 DEVICE_CACHE_NAME = 'devices.json'
@@ -41,6 +58,10 @@ Mesh_Secrets = CACHEDIR + '/' + MESH_SECRTES_NAME
 
 LED1 = config.LED1
 LED2 = config.LED2
+LED3 = config.LED3
+LED4 = config.LED4
+LED5 = config.LED5
+LED6 = config.LED6
 KEY1 = config.KEY1
 
 ON_DATA = [1, 1, 0]
@@ -49,15 +70,35 @@ OFF_DATA = [0, 1, 0]
 WAIT_TIME = 5
 
 m_WiFi_connected = False
-led1 = None
-led2 = None
+led = []
+pwmled = []
 key1 = None
-status_led_1 = None
-status_led_2 = None
+status_led = []
 m_client = None
 m_devices = None
+m_systemstatus = 0
+m_cbreplies = []
 Meshname = DEFAULT_MESHNAME
 Meshpass = DEFAULT_MESHPWD
+
+WIFI_ERROR_FLAG = 1
+BT_ERROR_FLAG = 2
+MQTT_ERROR_FLAG = 4
+BTMOD_ERROR_FLAG = 8
+ALT_CONFIG = 16
+WIFI_CONNECTING = 32
+MQTT_CONNECTING = 64
+MESH_CONNECTING = 128
+STATUS_TO_MESH = 0x11
+STATUS_FROM_MESH = 0x12
+EXIT_FLAG = 0x7F
+WIFI_ERROR_SYMB = "Wi-Fi"
+BT_ERROR_SYMB = "MESH"
+MQTT_ERROR_SYMB = "MQTT"
+BTMOD_ERROR_SYMB = "BTMOD"
+STATUS_TO_MESH_SYMB = ">>>Mesh"
+STATUS_FROM_MESH_SYMB = "Mesh>>>"
+EXIT_SYMB = "QUIT"
 
 def do_connect(ssid, pwd):
     """Connect to Wi-Fi network with 10s timeout"""
@@ -92,6 +133,8 @@ def on_message(topic, msg):
         process_status(m)
     if (t == MQTT_SUB_TOPIC_CONF):
         process_config(m)
+    if (t.startswith(MQTT_SUB_TOPIC_HASS_PREFIX)):
+        process_hass(t, m)
 
 
 def initMQTT():
@@ -102,20 +145,28 @@ def initMQTT():
         return False
     m_client.set_callback(on_message)  # Specify on_message callback
     m_client.connect()   # Connect to MQTT broker
-    m_client.subscribe(MQTT_SUB_TOPIC_ALL)
+#    m_client.subscribe(MQTT_SUB_TOPIC_ALL)
+    m_client.subscribe(MQTT_SUB_TOPIC_CMD)
+    m_client.subscribe(MQTT_PUB_TOPIC_STATUS)
+    m_client.subscribe(MQTT_SUB_TOPIC_CONF)
+    m_client.subscribe(MQTT_SUB_TOPIC_HASS_SET)
     return True
 
 
 def _send_command(cmd: str = 'AT'):
     """Internal method to send AT commands to BLE module appending 0D0A to the end"""
     if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
-    m_uart.write(cmd + '\r\n')
+    print_status(STATUS_TO_MESH)
+#    cmd = cmd + '\r\n'
+    m_uart.write(cmd)
+    time.sleep(0.01)
+    m_uart.write('\r\n')
     time.sleep(0.3)
 
 
 def send_command(cmd: str = None):
     """Send AT command without AT+ prefix"""
-    command = 'AT+'+cmd
+    command = 'AT+' + cmd
     _send_command(command)
 
 
@@ -153,14 +204,26 @@ def _setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
 def setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
     global Mesh_Secrets
     """Set mesh parameters to BLE module and reset it to make it effective."""
-    if not _setMeshParams(name, pwd):
+    trials = 0
+    while (not _setMeshParams(name, pwd)) and (trials < 4):
+        time.sleep(0.5)
+        trials = trials + 1
+    if trials >= 4:
         return False
-    if not resetBLEModule():
+    trials = 0
+    while (not resetBLEModule()) and (trials < 4):
+        time.sleep(0.5)
+        trials = trials + 1
+    if trials >= 4:
         print("ERROR: Cannot reset BLE module!")
-        ble_error()
+        ble_error(1)
     else:
-        led2.duty(896)
-    if not _setMeshParams(name, pwd):
+        ble_error(0)
+    trials = 0
+    while (not _setMeshParams(name, pwd)) and (trials < 4):
+        time.sleep(0.5)
+        trials = trials + 1
+    if trials >= 4:
         return False
     cacheMeshSecrets(name, pwd, Mesh_Secrets)
     return True
@@ -201,10 +264,12 @@ def retrieveMeshSecrets(def_name=DEFAULT_MESHNAME, def_pass=DEFAULT_MESHPWD, cac
         filep.close()
     return meshsecrets
 
+
 def refresh_devices(config, cache_path):
     """Refresh devices from configuration received"""
     global m_devices, Device_Cache
     if DEBUG: print("DEBUG: Refreshing device database")
+    print_progress("Refresh devices")
     try:
         m_devices = config['devices']
     except:
@@ -264,6 +329,32 @@ def lookup_device(name):
     return devaddr
 
 
+def rev_lookup_device(devaddr):
+    """Look up the device's address from the given name"""
+    global m_devices
+    name = None
+    if m_devices is None or devaddr == 0:
+        return name
+    if DEBUG: print("DEBUG: Looking up device name from database")
+    for dev in m_devices:
+        try:
+            tmp = dev['deviceAddress']
+            if tmp > 255:
+                addr = tmp >> 8 + ((tmp & 0x0F) << 8)
+            else:
+                addr = tmp
+        except:
+            addr = 0
+        if addr == devaddr:
+            try:
+                name = dev['deviceName']
+            except:
+                name = None
+            if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
+            break
+    return name
+
+
 def mesh_send(dst=0x00, cmd=0xd0, data=[]):
     """Send to mesh using binary data"""
     length = len(data)
@@ -272,8 +363,13 @@ def mesh_send(dst=0x00, cmd=0xd0, data=[]):
     atcommand = 'SEND={:x},{:d},{:02x}'.format(dst, length+1, cmd)
     for d in data:
         atcommand = atcommand + '{:02x}'.format(d)
+    trials = 0
     send_command(atcommand)
-    if not expect_reply('OK'):
+    while (not expect_reply('OK')) and (trials < 4):
+        time.sleep(0.1)
+        send_command(atcommand)
+        trials = trials + 1
+    if trials >= 4:
         print("ERROR in sending to mesh")
         return False
     return True
@@ -290,8 +386,13 @@ def mesh_send_asc(dst: int = 0x00, cmd: int = 0xd0, data: str = None):
         return False
     atcommand = 'SEND={:s},{:s},{:s}{:s}'.format(dst, str(length), cmd, data)
     if DEBUG: print("Sending to UART: %s" % atcommand)
+    trials = 0
     send_command(atcommand)
-    if not expect_reply('OK'):
+    while (not expect_reply('OK')) and (trials < 4):
+        time.sleep(0.1)
+        send_command(atcommand)
+        trials = trials + 1
+    if trials >= 4:
         print("ERROR in sending to mesh")
         return False
     return True
@@ -299,7 +400,7 @@ def mesh_send_asc(dst: int = 0x00, cmd: int = 0xd0, data: str = None):
 
 def expect_reply(reply='OK'):
     """Expect from serial port some specific incoming"""
-    return True
+#    return True
     rpy = getReply(5)
     if rpy is None:
         return False
@@ -310,6 +411,7 @@ def expect_reply(reply='OK'):
 
 
 def getReply(timeout=10):
+    global poll, m_uart, m_cbreplies, DEBUG
     """Check for serial port incoming"""
     events = poll.poll(timeout)
     data = ''
@@ -320,6 +422,7 @@ def getReply(timeout=10):
             if file[0] == m_uart:
                 ch = m_uart.read(1)
                 data = data + chr(ch[0])
+                #if DEBUG: print("getReply: %s" % data)
 
     if data is not '':
         # Show the byte as 2 hex digits then in the default way
@@ -328,38 +431,113 @@ def getReply(timeout=10):
         lines = data.split('\r\n')
         for line in lines:
             if line is not '':
-                reply.append(line)
-        if DEBUG: print("DEBUG: received %d lines of text as %s" % (len(reply), reply))
+                # Todo: Push +DATA reeplies to stack
+                if line.startswith('+DATA'):
+                    m_cbreplies.append(line)
+                else:
+                    reply.append(line)
+        if DEBUG: print("DEBUG: received %d lines of reply as %s" % (len(reply), reply))
+        if DEBUG: print("DEBUG: received %d lines of callbacks as %s" % (len(m_cbreplies), m_cbreplies))
         return reply
 
 
 def check_callbacks():
-    replies = getReply(3)
-    if replies is None:
+    global m_cbreplies, DEBUG
+    getReply(3)
+    # Todo: how not to eat OK's from getReply?
+    if len(m_cbreplies) == 0:
         return
-    for reply in replies:
+    while len(m_cbreplies) > 0:
+        reply = m_cbreplies.pop()
         if reply.startswith('+DATA'):
-            devaddrstr, lengthstr, callback = reply[6:].split(',')
-            if DEBUG: print("DEBUG: Got call back from %s" % devaddrstr)
             try:
-                t = ubinascii.unhexlify(devaddrstr)
+                devaddrstr, lengthstr, callback = reply[6:].split(',')
             except:
-                devaddr = -1
-            else:
-                devaddr = t[0] * 256 + t[1]
-            try:
-                length = int(lengthstr)
-            except:
-                length = 0
-            if (len(callback) != length * 2) or (length == 0) or (devaddr == -1):
-                print("ERROR: Corrupted callback packet found")
-                process_callback(devaddr, callback)
-            else:
-                process_callback(devaddr, callback)
+                devaddrstr = None
+            if devaddrstr is not None:
+                if DEBUG: print("DEBUG: Got call back from %s" % devaddrstr)
+                print_status(STATUS_FROM_MESH)
+                try:
+                    t = ubinascii.unhexlify(devaddrstr)
+                except:
+                    devaddr = -1
+                else:
+                    devaddr = t[0] * 256 + t[1]
+                try:
+                    length = int(lengthstr)
+                except:
+                    length = 0
+                if (len(callback) != length * 2) or (length == 0) or (devaddr == -1):
+                    print("ERROR: Corrupted callback packet found")
+                    process_callback(devaddr, callback)
+                else:
+                    process_callback(devaddr, callback)
 
 
 def process_callback(devaddr, callback):
+    global m_client, DEBUG
     if DEBUG: print("Processing call back from %04x" % devaddr)
+    name = rev_lookup_device(devaddr)
+    if name is None:
+        print("ERROR: process_callback(): cannot find device name with address %d" % devaddr)
+        return
+    opcode = callback[:2]
+    if opcode == 'DC':
+        # Status notify report
+        if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
+        topic = MQTT_PUB_TOPIC_STATUS
+        par1 = callback[2:4]
+        par2 = callback[4:6]
+        bgt = None
+        state = None
+        if par1 != '':
+            try:
+                bgt = ubinascii.unhexlify(par1)[0]
+            except:
+                bgt = 0
+            if bgt > 0:
+                state = 'on'
+            else:
+                state = 'off'
+        cct = None
+        if par2 != '':
+            try:
+                cct = ubinascii.unhexlify(par2)[0]
+            except:
+                cct = 0
+        mesg = '"device_name":"{:s}"'.format(name)
+        if bgt is not None:
+            mesg = mesg + ', "state":"{:s}", "brightness":{:d}'.format(state, bgt)
+        if cct is not None:
+            mesg = mesg + ', "cct":{:d}'.format(cct)
+        mesg = '{' + mesg + '}'
+        if m_client:
+            m_client.publish(topic, mesg.encode('utf-8'))
+        update_hass(name, state, bgt, cct)
+    else:
+        if DEBUG: print("Unsupported call back opcode %s" % opcode)
+        return
+
+
+def update_hass(name, state, brightness, cct):
+    global DEBUG, m_client, MQTT_PUB_TOPIC_HASS_PREFIX
+    if DEBUG: print("update_hass(): Pub status for %s" % (name))
+    hass_state_topic = MQTT_PUB_TOPIC_HASS_PREFIX + name
+    hass_mesg = '"device_name":"{:s}"'.format(name)
+    if state is not None:
+        hass_mesg = hass_mesg + ',"state":"{:s}"'.format(state.upper())
+    if brightness is not None:
+        hass_mesg = hass_mesg + ',"brightness":{:d}'.format(brightness)
+    if cct is not None:
+        hasscct = cct
+        if cct <= 100:
+            cct = 100 - cct
+            hasscct = int(cct * 347 / 100 + 153)
+        hass_mesg = hass_mesg + ',"color_temp":{:d}'.format(hasscct)
+    hass_mesg = '{' + hass_mesg + '}'
+    if DEBUG: print("update_hass(): Pub mesg: %s" % hass_mesg)
+    if m_client:
+        m_client.publish(hass_state_topic, hass_mesg.encode('utf-8'))
 
 
 def process_command(mqttcmd):
@@ -377,6 +555,7 @@ def process_command(mqttcmd):
     """
     global DEBUG
     if DEBUG: print("Process command %s" % mqttcmd)
+    print_progress(mqttcmd[:16])
     if mqttcmd is not '':
         if '/' not in mqttcmd:
             if (mqttcmd == "debug"):
@@ -501,6 +680,137 @@ def process_command(mqttcmd):
                         pars.append(p)
                     cmd(did, c, pars)
 
+
+def process_hass(topic, msg):
+    global DEBUG
+    if DEBUG: print("Process HASS command %s at topic %s" % (msg, topic))
+    ts = topic.split('/')
+    if ts is None:
+        # We don't handle topics without '/'
+        print("ERROR: process_hass(): Topic has no '/'")
+        return
+    if ts[-1:][0] != 'set':
+        # We don't handle here non-set topics
+        print("ERROR: process_hass(): Topic is not ended with 'set' (%s)" % ts[-1:][0])
+        return
+    device_name = ts[-2:][0]
+    if device_name == '' or device_name == 'hass':
+        # Missing device name, we don't handle either
+        print("ERROR: process_hass(): Topic does not contain device name (%s)" % device_name)
+        return
+    if device_name is not None:
+        if DEBUG: print("HASS control of device %s" % device_name)
+        try:
+            mqtt_json = json.loads(msg)
+        except:
+            print("ERROR: JSON format error")
+            return
+        try:
+            state = mqtt_json['state']
+        except:
+            state = None
+        else:
+            state = state.lower()
+        try:
+            brightness = mqtt_json['brightness']
+        except:
+            brightness = None
+        try:
+            cct = mqtt_json['color_temp']
+        except:
+            cct = None
+        try:
+            color = mqtt_json['color']
+        except:
+            color = None
+        hexdata = ''
+        did = 0
+        try:
+            did = int(device_name)
+        except:
+            did = lookup_device(device_name)
+        else:
+            device_name = rev_lookup_device(did)
+        if DEBUG: print("HASS control %s for state: %s, brightness %s, cct: %s, color: %s" % (device_name, state, brightness, cct, color))
+        if (did > 0):
+            if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s" % (msg, did))
+            if (state == "on"):
+                cmd(did, 0xd0, ON_DATA)
+            if (state == "off"):
+                cmd(did, 0xd0, OFF_DATA)
+            if (brightness is not None):
+                hexdata = brightness
+                try:
+                    # Make sure we are dealing with int not string
+                    i = int(hexdata)
+                except:
+                    i = 5
+                if (i > 100 or i < 0):
+                    print("ERROR: Lumnance value must be between 0 and 100")
+                else:
+                    data = i.to_bytes(1, 'big')
+                    cmd(did, 0xd2, list(data))
+            if (cct is not None):
+                hexdata = cct
+                ct = 0
+                try:
+                    # Make sure we are dealing with int not string
+                    i = int(hexdata)
+                except:
+                    i = 0
+                if i > 100:
+                    if (i >= 153) and (i <= 500):
+                        # We've got HASS color temp
+                        ct = int(100 * (i - 153)/347)
+                        ct = 100 - ct
+                    # We've got Kelvin
+                    elif (i < 1800 or i > 6500):
+                        print("ERROR: CCT value must be between 1800K and 6500K")
+                        return
+                    else:
+                        ct = int(100 * (i - 2700)/3800)
+                else:
+                    ct = i
+                if ct < 0:
+                    ct = 0
+                if ct > 100:
+                    ct = 100
+                i = int(ct * 3800 / 100 + 2700)
+                data = i.to_bytes(2, 'big')
+                cmd(did, 0xf5, [0x10] + list(data))
+                time.sleep(0.2)
+                data = ct.to_bytes(1, 'big')
+                cmd(did, 0xe2, [0x05] + list(data))
+            if (color is not None):
+                try:
+                    cr = color['r']
+                    cg = color['g']
+                    cb = color['b']
+                    r = int(cr)
+                    g = int(cg)
+                    b = int(cb)
+                except:
+                    print("ERROR: Malformed RGB colour in JSON")
+                    return
+                if (r > 255) or (g > 255) or (b > 255) or (r < 0) or (g < 0) or (b < 0):
+                    print("ERROR: RGB colour values outside of 0..255")
+                    return
+                hexdata = '{:02X}'.format(r) + '{:02X}'.format(g) + '{:02X}'.format(b)
+                if hexdata != '':
+                    i = int(hexdata, 16)
+                    if (i > 0xFFFFFF):
+                        print("ERROR: RGB value must be 3 bytes")
+                        return
+                    else:
+                        data = i.to_bytes(3, 'big')
+                        cmd(did, 0xe2, [0x04] + list(data))
+            hassct = None
+            if cct is not None:
+                ct = 100 - ct
+                hassct = int(ct * 347 / 100 + 153)
+            update_hass(device_name, state, brightness, hassct)
+
+
 def cmd(device_addr, op_code, pars):
     """Properly format mesh command before sending to mesh"""
     if DEBUG: print("Sending to %s op code %s and pars %s" % (device_addr, op_code, pars))
@@ -527,6 +837,7 @@ def process_config(conf):
     global Meshname, Meshpass, m_devices
     config = None
     if DEBUG: print("Process config %s" % conf)
+    print_progress("Renew config")
     try:
         config = ujson.loads(conf)
     except:
@@ -547,65 +858,259 @@ def process_config(conf):
     return True
 
 
-def wifi_error():
-    global status_led_1
+def wifi_error(e):
     """Flash LED upon Wi-Fi connection failed"""
-    if status_led_1 is not None:
-        status_led_1.deinit()
-    status_led_1 = esp32.RMT(0, pin=LED1, clock_div=255)
-    status_led_1.loop(True)
-    status_led_1.write_pulses((16384, 1, 16384, 16384, 1), start=0)
+    if e == 1:
+        print_status(WIFI_ERROR_FLAG)
+    elif e == 2:
+        print_status(WIFI_CONNECTING)
+    else:
+        print_status(~WIFI_CONNECTING)
+        print_status(~WIFI_ERROR_FLAG)
 
 
-def mqtt_error():
-    global status_led_1
+def mqtt_error(e):
     """Flashes LED upon MQTT connection failure"""
-    if status_led_1 is None:
-        status_led_1 = esp32.RMT(0, pin=LED1, clock_div=255)
-        status_led_1.loop(True)
-    status_led_1.write_pulses((32767, 1, 32767, 8192, 1), start=1)
+    if e == 1:
+        print_status(MQTT_ERROR_FLAG)
+    else:
+        print_status(~MQTT_ERROR_FLAG)
 
 
-def ble_error():
-    global status_led_2
+def ble_error(e):
     """Flashes LED upon communication problem with the BLE module"""
-    if status_led_2 is not None:
-        status_led_2.deinit()
-    status_led_2 = esp32.RMT(1, pin=LED2, clock_div=255)
-    status_led_2.loop(True)
-    status_led_2.write_pulses((16384, 1, 16384, 16384, 1), start=0)
+    if e == 1:
+        print_status(BT_ERROR_FLAG)
+    else:
+        print_status(~BT_ERROR_FLAG)
+
+def blemodu_error(e):
+    """Flashes LED upon communication problem with the BLE module"""
+    if e == 1:
+        print_status(BTMOD_ERROR_FLAG)
+    else:
+        print_status(~BTMOD_ERROR_FLAG)
+
+
 
 def exit_mode():
-    global LED1, LED2, status_led_1, status_led_2
-    """Flashes LED upon communication problem with the BLE module"""
-    if status_led_1 is not None:
-        status_led_1.deinit()
-    status_led_1 = esp32.RMT(0, pin=LED1, clock_div=255)
-    status_led_1.loop(True)
-    status_led_1.write_pulses((16384, 1, 16384, 16384, 1), start=0)
-    if status_led_2 is not None:
-        status_led_2.deinit()
-    status_led_2 = esp32.RMT(1, pin=LED2, clock_div=255)
-    status_led_2.loop(True)
-    status_led_2.write_pulses((16384, 1, 16384, 16384, 1), start=0)
+    """Exit willingly"""
+    m_WiFi_connected = do_connect(SSID, PASS) # If we want webrepl afterwards
+    print_status(EXIT_FLAG)
+    time.sleep(3)
+    sys.exit(0)
 
 
 def board_init():
-    global LED1, LED2, KEY1, led1, led2, key1
+    global LED1, LED2, LED3, LED4, LED5, LED6, KEY1, led, pwmled, key1, status_led
     KEY1.init(mode=Pin.IN, pull=Pin.PULL_UP)
     key1 = KEY1
-    led1 = PWM(LED1, freq=20000, duty=1023)
-    led2 = PWM(LED2, freq=20000, duty=1023)
+    LED1.init(mode=Pin.OUT)
+    led.append(LED1)
+    LED2.init(mode=Pin.OUT)
+    led.append(LED2)
+    LED3.init(mode=Pin.OUT)
+    led.append(LED3)
+    LED4.init(mode=Pin.OUT)
+    led.append(LED4)
+    LED5.init(mode=Pin.OUT)
+    led.append(LED5)
+    LED6.init(mode=Pin.OUT)
+    led.append(LED6)
+    for i in range(0, 6):
+        pwmled.append(None)
+        status_led.append(None)
+        rmt = esp32.RMT(i, pin=led[i])
+        rmt.deinit()
+        pwm = PWM(led[i])
+        pwm.deinit()
+        led[i].init(mode=Pin.OUT)
+        led[i].value(1)
 
-
+m_rstcnt = 0
 def check_reset():
+    global m_rstcnt, key1, DEBUG
     if key1.value() == 0:
-        time.sleep(0.2)
-        reset()
+#        print_progress("Reset/Exit?")
+        if m_rstcnt == 0:
+            m_rstcnt = time.ticks_ms()  # start timer at first keypress
+    else:
+        if m_rstcnt == 0:
+            return  # no key pressed so far
+        # key released, check elapsed time on keypress
+        t = time.ticks_ms() - m_rstcnt
+        if DEBUG: print("Elapse time: %f" % t)
+        if t > 50 and t < 1000:
+            # perform reset only when key is pressed down for a while (debounce) but not too long (exit)
+            print_status(0)
+            reset()
+        if t > 5:
+            # Quit when key hold for > 5s
+            exit_mode()
+        # Key released but not meant for reset, clear timer
+        m_rstcnt = 0
+
+
+def displayInit():
+    if not USEOLED:
+        return
+    oled.fill(0)
+    # oled.text(String,X-pixels,y-Pixels)
+    wri_m.set_textpos(oled, 0, 0)  # verbose = False to suppress console output
+    wri_m.printstring('BleuSky')
+    # Show on display
+    oled.show()
+
+
+def print_progress(msg):
+    if DEBUG: print("Progress: %s" % msg)
+    if not USEOLED:
+        return
+    wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
+    wri_m.printstring("                            ")
+    wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
+    wri_m.printstring(msg)
+    oled.show()
+
+
+def print_status(statusflag):
+    global m_systemstatus, DEBUG
+    if DEBUG: print("print_status(): flag = %d" % statusflag)
+    st = statusflag
+    if (not USEOLED) and ((statusflag == STATUS_FROM_MESH) or (statusflag == STATUS_TO_MESH)):
+        return
+    if st !=  EXIT_FLAG:
+        if st < 0:
+            m_systemstatus = m_systemstatus & st
+        else:
+            m_systemstatus = m_systemstatus | st
+        st = m_systemstatus
+    if USEOLED:
+        if st == 0:
+            msg = "Ready"
+        elif st == EXIT_FLAG:
+            msg = EXIT_SYMB
+        else:
+            if st & STATUS_FROM_MESH:
+                msg = STATUS_FROM_MESH_SYMB
+            elif st & STATUS_TO_MESH:
+                msg = STATUS_TO_MESH_SYMB
+            else:
+                msg = "ERR: "
+                if st & WIFI_ERROR_FLAG:
+                    msg = msg + ' ' + WIFI_ERROR_SYMB
+                if st & BT_ERROR_FLAG:
+                    msg = msg + ' ' + BT_ERROR_SYMB
+                if st & MQTT_ERROR_FLAG:
+                    msg = msg + ' ' + MQTT_ERROR_SYMB
+                if st & BTMOD_ERROR_FLAG:
+                    msg = msg + ' ' + BTMOD_ERROR_SYMB
+        wri_m.set_textpos(oled, 50, 0)  # verbose = False to suppress console output
+        wri_m.printstring("                        ")
+        wri_m.set_textpos(oled, 50, 0)  # verbose = False to suppress console output
+        wri_m.printstring(msg)
+        oled.show()
+    else:
+        if DEBUG: print("print_status(): st = %d" % st)
+        if st & WIFI_ERROR_FLAG:
+            error_indicator(1)
+        elif st & WIFI_CONNECTING:
+            error_indicator(2, 1)
+        else:
+            error_indicator(2)
+        if st & BT_ERROR_FLAG:
+            error_indicator(3)
+        else:
+            error_indicator(4)
+        if st & MQTT_ERROR_FLAG:
+            error_indicator(5)
+        else:
+            error_indicator(6)
+        if st & BTMOD_ERROR_FLAG:
+            error_indicator(3, 1)
+        else:
+            error_indicator(4)
+        if st & ALT_CONFIG:
+            error_indicator(6, 1)
+        else:
+            error_indicator(6)
+        if st == 0:
+            error_indicator(0)
+        if st == EXIT_FLAG:
+            error_indicator(0, 1)
+
+def error_indicator(n, flashmode=0, onoff=1):
+    global led, status_led, pwmled, DEBUG
+    if DEBUG: print("error_indicator(): n = %d, flashmode = %d, onoff = %d" % (n, flashmode, onoff))
+    if n > 0:
+        n = n - 1
+        led[n].value(1)
+        if flashmode == 0:
+                if status_led[n] is not None:
+#                    if DEBUG: print("error_indicator(): resetting RMT/PWM for LED %d" % n)
+                    status_led[n].loop(False)
+                    status_led[n].deinit()
+                if pwmled[n] is not None:
+                    pwmled[n].deinit()
+                    pwmled[n] = None
+                pwmled[n] = PWM(led[n], freq=20000, duty=1023-200*onoff)
+        else:
+            if status_led[n] is not None:
+                status_led[n].deinit()
+                status_led[n] = None
+            if pwmled[n] is not None:
+                pwmled[n].deinit()
+                pwmled[n] = None
+            status_led[n] = esp32.RMT(n, pin=led[n], clock_div=255)
+            status_led[n].loop(True)
+        if flashmode == 1:
+            if status_led[n] is not None:
+                status_led[n].write_pulses((32767, 1, 32767, 8192, 1), start=1)
+        elif flashmode == 2:
+            if status_led[n] is not None:
+                status_led[n].write_pulses((16384, 1, 16384, 16384, 1), start=0)
+    else:
+        if flashmode == 0:
+            for i in range(0, 6):
+                if status_led[i] is not None:
+                    status_led[i].loop(False)
+                    status_led[i].deinit()
+                    status_led[i] = None
+                #led[i].init(mode=Pin.OUT)
+                if pwmled[i] is not None:
+                    pwmled[i].deinit()
+                    pwmled[i] = None
+                if i % 2 == 0:
+                    pwmled[i] = PWM(led[i], freq=20000, duty=1023)
+                else:
+                    pwmled[i] = PWM(led[i], freq=20000, duty=1023-200*onoff)
+        else:
+            # Exiting
+            for i in range(0, 6):
+                if status_led[i] is not None:
+                    status_led[i].loop(False)
+                    status_led[i].deinit()
+                    status_led[i] = None
+                if pwmled[i] is not None:
+                    pwmled[i].deinit()
+                    pwmled[i] = None
+                led[i].init(mode=Pin.OUT)
+                led[i].value(1)
+
+
+
+
+if USEOLED:
+    i2c = I2C(scl=Pin(4), sda=Pin(5))
+    oled = ssd1306.SSD1306_I2C(128, 64, i2c)
+    wri_l = Writer(oled, nunito_r)
+    wri_v = Writer(oled, ostrich_r)
+    wri_m = Writer(oled, font6)
+    wri_m_len = wri_m.stringlen("999")
+    wri_v_len = wri_v.stringlen("9999")
 
 board_init()
-LED1.init(mode=Pin.OUT)
-LED1.value(0)
+displayInit()
 
 t = time.time()
 released = False
@@ -616,34 +1121,23 @@ if key1.value() == 0:
             break
     if not released:
         exit_mode()
-        m_WiFi_connected = do_connect(SSID, PASS)
-        time.sleep(3)
-        if status_led_1 is not None:
-            status_led_1.loop(False)
-            status_led_1.deinit()
-        if status_led_2 is not None:
-            status_led_2.loop(False)
-            status_led_2.deinit()
-        LED1.init(mode=Pin.OUT)
-        LED1.value(1)
-        LED2.init(mode=Pin.OUT)
-        LED2.value(1)
-        if led1 is not None:
-            led1.deinit()
-        if led2 is not None:
-            led2.deinit()
-        led1 = PWM(LED1, freq=20000, duty=768)
-        led2 = PWM(LED2, freq=20000, duty=1023)
-        sys.exit(0)
-if led1 is not None:
-    led1.deinit()
-led1 = PWM(LED1, freq=20000, duty=900)
+#error_indicator(2, 0)
 
 if released:
     """Button pressed during boot, change to config #2"""
     if DEBUG: print("DEBUG: Switch to alt config")
-    import config_alt
+    if USEOLED:
+        import config_oled_alt as config_alt
+    else:
+        import config_alt
     import secrets_alt
+
+    if USEOLED:
+        wri_m.set_textpos(oled, 16, 0)  # verbose = False to suppress console output
+        wri_m.printstring('Alternate config')
+        oled.show()
+    else:
+        print_status(ALT_CONFIG)
 
     DEFAULT_MESHNAME = secrets_alt.DEFAULT_MESHNAME
     DEFAULT_MESHPWD = secrets_alt.DEFAULT_MESHPWD
@@ -660,28 +1154,46 @@ if released:
         MQTT_PASS = secrets_alt.MQTT_PASS
     except:
         MQTT_PASS = None
-
-
+else:
+    if USEOLED:
+        wri_m.set_textpos(oled, 16, 0)  # verbose = False to suppress console output
+        wri_m.printstring('Default config')
+        oled.show()
+    else:
+        print_status(~ALT_CONFIG)
 
 if DEBUG: print("Connecting to Wi-Fi")
+wifi_error(2)
 m_WiFi_connected = do_connect(SSID, PASS)
 
 if m_WiFi_connected:
+    print_progress("Wi-Fi OK")
+    wifi_error(0)
     if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
-    led1.duty(896)
+    if MQTT_USER == '':
+        MQTT_USER = None
+    if MQTT_PASS == '':
+        MQTT_PASS = None
     try:
         m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
     except:
         m_client = None
     if not initMQTT():
-        mqtt_error()
+        mqtt_error(1)
+    else:
+        print_progress("MQTT OK")
+        m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
+        mqtt_error(0)
 else:
-    wifi_error()
+    if DEBUG: print("Error connecting to Wi-Fi")
+    wifi_error(1)
 
 
 # Main()
 
 print("INFO: Starting mini-gateway")
+print_progress("Starting up")
+
 try:
     os.mkdir(CACHEDIR)
 except:
@@ -694,6 +1206,7 @@ if DEBUG: print("Using mesh name %s and pass %s" % (Meshname, Meshpass))
 m_devices = retrieveDeviceDB(Device_Cache)
 
 if DEBUG: print("Initialising UART to BLE")
+print_progress("Init UART")
 m_uart = UART(2, tx=18, rx=4)                         # init with given baudrate
 m_uart.init(115200, bits=8, parity=None, stop=1, timeout=10)
 
@@ -702,15 +1215,25 @@ poll.register(m_uart, select.POLLIN)
 
 if not checkBLEModule():
     print("ERROR: Cannot find BLE module!")
+    blemodu_error(1)
+else:
+    print("Found BLE module")
+    blemodu_error(0)
+    
 
 atcmd = ''
 Opcode = ''
 
 setMeshParams(name=Meshname, pwd=Meshpass)
 
+print_progress("                ")
+#m_systemstatus = 0  # Reset system status so that new status can be updated within the loop
+print_status(m_systemstatus)
+time.sleep(0.1)
 if DEBUG: print("Entering infinte loop")
 while True:
     # Processes MQTT network traffic, callbacks and reconnections. (Blocking)
     if m_client: m_client.check_msg()
     check_callbacks()
     check_reset()
+
