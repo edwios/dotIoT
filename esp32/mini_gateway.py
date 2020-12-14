@@ -100,6 +100,12 @@ STATUS_TO_MESH_SYMB = ">>>Mesh"
 STATUS_FROM_MESH_SYMB = "Mesh>>>"
 EXIT_SYMB = "QUIT"
 
+m_rdevstatuses = ["disabled", "enabled"]
+m_rastrooffsets = ["before", "after"]
+m_rdevactions = ["off", "on", "scene"]
+m_ralarmtypes = ["day", "week"]
+
+
 def do_connect(ssid, pwd):
     """Connect to Wi-Fi network with 10s timeout"""
     import network
@@ -469,23 +475,32 @@ def check_callbacks():
                     length = 0
                 if (len(callback) != length * 2) or (length == 0) or (devaddr == -1):
                     print("ERROR: Corrupted callback packet found")
-                    process_callback(devaddr, callback)
+#                    process_callback(devaddr, callback)
                 else:
                     process_callback(devaddr, callback)
 
 
 def process_callback(devaddr, callback):
-    global m_client, DEBUG
+    global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG
     if DEBUG: print("Processing call back from %04x" % devaddr)
+    topic = MQTT_PUB_TOPIC_STATUS
     name = rev_lookup_device(devaddr)
     if name is None:
         print("ERROR: process_callback(): cannot find device name with address %d" % devaddr)
         return
-    opcode = callback[:2]
-    if opcode == 'DC':
+    sopcode = callback[:2]
+    if (len(callback) % 2) != 0:
+        print("ERROR: process_callback(): corrupted callback %s from %s" % (callback, name))
+        return
+    try:
+        data = ubinascii.unhexlify(callback)
+    except:
+        print("ERROR: process_callback(): corrupted callback %s from %s" % (callback, name))
+        return     
+    opcode = data[0]   
+    if opcode == 0xDC:
         # Status notify report
         if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
-        topic = MQTT_PUB_TOPIC_STATUS
         par1 = callback[2:4]
         par2 = callback[4:6]
         bgt = None
@@ -514,6 +529,135 @@ def process_callback(devaddr, callback):
         if m_client:
             m_client.publish(topic, mesg.encode('utf-8'))
         update_hass(name, state, bgt, cct)
+    elif opcode == 0xE7:
+        # +DATA:0001,23,E71102A50192097F170A0000
+        cbs = data[3]
+        if cbs == 0xA5:
+            # alarm_get() return
+            alrm_index = data[4]
+            alrm_event = data[5]
+            alrm_action = alrm_event & 0x0f
+            alrm_actionStr = m_rdevactions[alrm_action]
+            alrm_type = (alrm_event & 0x70) >> 4
+            alrm_typeStr = m_ralarmtypes[alrm_type]
+            alrm_status = (alrm_event & 0x80) >> 7
+            alrm_statusStr = m_rdevstatuses[alrm_status]
+            alrm_month = data[6]
+            alrm_dayom = data[7]
+            alrm_dayomStr = '{:08b}'.format(alrm_dayom)
+            alrm_hour  = data[8]
+            alrm_min   = data[9]
+            alrm_sec   = data[10]
+            alrm_scene = data[11]
+            alrm_hourStr = '{:02d} hour'.format(alrm_hour)
+            alrm_minStr = '{:02d} min'.format(alrm_min)
+            alrm_secStr = '{:02d} sec'.format(alrm_sec)
+            alrm_sceneStr = '{:d}'.format(alrm_scene)
+            alrm_indexStr = '{:d}'.format(alrm_index)
+            timeStr = '{:02d}:{:02d}:{:02d}'.format(alrm_hour, alrm_min, alrm_sec)
+            #if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
+            mesg = {"device_name":name, "device_id":devaddr, "type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr, "alarm_days":alrm_dayomStr}
+            jstr = json.dumps(mesg)
+            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
+            if m_client:
+                m_client.publish(topic, jstr.encode('utf-8'))
+    elif opcode == 0xEB:
+        # Astro timers
+        cbs = data[4]       # data[3] is fixed to 0x01
+        if cbs == 0x81:     # astro time geo settings
+            if (data[5] == 0):
+                meridian = 'East'
+            else:
+                meridian = 'West'
+            long_deg = data[6]
+            long_min = data[7]/60.0
+            longstr = '{:0.6f}'.format(long_deg + long_min)
+            if (data[8] == 0):
+                equator = 'South'
+            else:
+                equator = 'North'
+            lat_deg = data[9]
+            lat_min = data[10]/60.0
+            latstr = '{:0.6f}'.format(lat_deg + lat_min)
+            if (data[11] == 0):
+                tz_ew = 'East'
+            else:
+                tz_ew = 'West'
+            tz = data[12]
+            mesg = {"device_name":name, "device_id":devaddr, "type":"astro", "meridian":meridian, "longitute":longstr, "equator":equator, "latitude":latstr, "timezone_dir":tz_ew, "timezone":tz}
+            jstr = json.dumps(mesg)
+            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
+            if m_client:
+                m_client.publish(topic, jstr.encode('utf-8'))
+        if cbs == 0x82 or cbs == 0x83:     # Got Sunrise/Sunset time report
+            time_h = data[5]
+            time_m = data[6]
+            if cbs == 0x82:
+                rtype = "Sunrise"
+            if cbs == 0x83:     # Got Sunset time
+                rtype = "Sunset"
+            if data[14] != 0xFF:
+                statusStr = m_rdevstatuses[data[7]]
+                actionStr = m_rdevactions[data[8]]
+                offsettypeStr = m_rastrooffsets[data[9]]
+                offset_h = data[10]
+                offset_m = data[11]
+                offset_hStr = '{:02d} hour'.format(offset_h)
+                offset_mStr = '{:02d} min'.format(offset_m)
+                timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
+                offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
+                if DEBUG: print("INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (name, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
+                mesg = {"device_name":name, "device_id":devaddr, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
+            else:
+                mesg['deviceName'] = name
+                mesg['deviceID'] = devaddr
+                mesg['type'] = 'astro'
+            jstr = json.dumps(mesg)
+            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
+            if m_client:
+                m_client.publish(topic, jstr.encode('utf-8'))
+        if cbs == 0x84:
+            # Get DST
+            summer_start_month = data[5]
+            summer_start_day = data[6]
+            summer_start_str = '{:d}/{:d}'.format(summer_start_day, summer_start_month)
+            if (data[7] == 0):
+                summer_comp = -1
+            else:
+                summer_comp = 1
+            summer_offset = summer_comp * data[8]
+            winter_start_month = data[9]
+            winter_start_day = data[10]
+            winter_start_str = '{:d}/{:d}'.format(winter_start_day, winter_start_month)
+            if (data[11] == 0):
+                winter_comp = -1
+            else:
+                winter_comp = 1
+            winter_offset = winter_comp * data[12]
+            mesg = {"device_name":name, "device_id":devaddr, "summer_start_d_m":summer_start_str, "summer_offset":summer_offset, "winter_start_d_m":winter_start_str, "winter_offset":winter_offset}
+            jstr = json.dumps(mesg)
+            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
+            if m_client:
+                m_client.publish(topic, jstr.encode('utf-8'))
+        if cbs == 0x85:     # Calculated astro time settings
+            # +DATA:000b,23,EB110201850000000000000000000007000003B85B7FFD   
+            # We look at Adjusted data only     
+            sunrise_h_dst = data[9]
+            sunrise_m_dst = data[10]
+            sunset_h_dst = data[11]
+            sunset_m_dst = data[12]
+#            sunrise_h_dst = data[5]
+#            sunrise_m_dst = data[6]
+#            sunset_h_dst = data[7]
+#            sunset_m_dst = data[8]
+            sunrise_dst = '{:02d}:{:02d}'.format(sunrise_h_dst, sunrise_m_dst)
+            sunset_dst = '{:02d}:{:02d}'.format(sunset_h_dst, sunset_m_dst)
+            if DEBUG: print("INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
+            mesg = {"device_name":name, "device_id":devaddr, "sunrise":sunrise_dst, "sunset":sunset_dst}
+            jstr = json.dumps(mesg)
+            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
+            if m_client:
+                m_client.publish(topic, jstr.encode('utf-8'))
     else:
         if DEBUG: print("Unsupported call back opcode %s" % opcode)
         return
@@ -621,12 +765,18 @@ def process_command(mqttcmd):
                     else:
                         data = i.to_bytes(3, 'big')
                         cmd(did, 0xe2, [0x04] + list(data))
+            elif (hcmd == "get_geo"):
+                cmd(did, 0xea, [0x08, 0x81])
+                _expectedCallBack = [0xeb, 0x81]       
             elif (hcmd == "get_sunrise"):
                 cmd(did, 0xea, [0x08, 0x82])
                 _expectedCallBack = [0xeb, 0x82]
             elif (hcmd == "get_sunset"):
                 cmd(did, 0xea, [0x08, 0x83])
                 _expectedCallBack = [0xeb, 0x83]
+            elif (hcmd == "get_dst"):
+                cmd(did, 0xea, [0x08, 0x84])
+                _expectedCallBack = [0xeb, 0x84]
             elif (hcmd == "get_astro"):
                 cmd(did, 0xea, [0x08, 0x85])
                 _expectedCallBack = [0xeb, 0x85]
