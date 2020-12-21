@@ -8,15 +8,7 @@ import network
 import select
 import esp32
 import secrets
-if USEOLED:
-    import config_oled as config
-    from writer import Writer
-    import nunito_r
-    import ostrich_r
-    import font6
-    import ssd1306
-else:
-    import config as config
+import config as config
 import ujson
 import os
 import ubinascii
@@ -89,8 +81,8 @@ ALT_CONFIG = 16
 WIFI_CONNECTING = 32
 MQTT_CONNECTING = 64
 MESH_CONNECTING = 128
-STATUS_TO_MESH = 0x11
-STATUS_FROM_MESH = 0x12
+STATUS_TO_MESH = 256
+STATUS_FROM_MESH = 512
 EXIT_FLAG = 0x7F
 WIFI_ERROR_SYMB = "Wi-Fi"
 BT_ERROR_SYMB = "MESH"
@@ -483,51 +475,39 @@ def check_callbacks():
 def process_callback(devaddr, callback):
     global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG
     if DEBUG: print("Processing call back from %04x" % devaddr)
-    topic = MQTT_PUB_TOPIC_STATUS
     name = rev_lookup_device(devaddr)
-    if name is None:
-        print("ERROR: process_callback(): cannot find device name with address %d" % devaddr)
+    if (name is None) or (callback is None):
+        print("ERROR: process_callback(): cannot find device name with address %d or no callback is given" % devaddr)
         return
-    sopcode = callback[:2]
-    if (len(callback) % 2) != 0:
+    if ((len(callback) % 2) != 0) or (len(callback) == 0):
         print("ERROR: process_callback(): corrupted callback %s from %s" % (callback, name))
         return
     try:
         data = ubinascii.unhexlify(callback)
     except:
         print("ERROR: process_callback(): corrupted callback %s from %s" % (callback, name))
-        return     
+        return
+    if (data is None):
+        return   
+    if len(data) == 0:
+        return
     opcode = data[0]   
     if opcode == 0xDC:
         # Status notify report
         if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
-        par1 = callback[2:4]
-        par2 = callback[4:6]
-        bgt = None
+        bgt = data[1]
+        cct = data[2]
         state = None
-        if par1 != '':
-            try:
-                bgt = ubinascii.unhexlify(par1)[0]
-            except:
-                bgt = 0
+        mesg = {"device_name":name}
+        if bgt is not None:
             if bgt > 0:
                 state = 'on'
             else:
                 state = 'off'
-        cct = None
-        if par2 != '':
-            try:
-                cct = ubinascii.unhexlify(par2)[0]
-            except:
-                cct = 0
-        mesg = '"device_name":"{:s}"'.format(name)
-        if bgt is not None:
-            mesg = mesg + ', "state":"{:s}", "brightness":{:d}'.format(state, bgt)
+            mesg['state'] = state
+            mesg['brightness'] = bgt
         if cct is not None:
-            mesg = mesg + ', "cct":{:d}'.format(cct)
-        mesg = '{' + mesg + '}'
-        if m_client:
-            m_client.publish(topic, mesg.encode('utf-8'))
+            mesg['cct'] = cct
         update_hass(name, state, bgt, cct)
     elif opcode == 0xE7:
         # +DATA:0001,23,E71102A50192097F170A0000
@@ -544,23 +524,38 @@ def process_callback(devaddr, callback):
             alrm_statusStr = m_rdevstatuses[alrm_status]
             alrm_month = data[6]
             alrm_dayom = data[7]
-            alrm_dayomStr = '{:08b}'.format(alrm_dayom)
+            if (alrm_type == 0):
+                alrm_dayomStr = '{:02d}/{:02d}'.format(alrm_month, alrm_dayom)
+            else:
+                alrm_dayomStr = '{:07b}'.format(alrm_dayom)
+                week = 'smtwtfs'
+                weekstr = ''
+                for i in range(7):
+                    if alrm_dayomStr[i] == '1':
+                        weekstr = weekstr + week[i].upper()
+                    else:
+                        weekstr = weekstr + week[i]
+                alrm_dayomStr = weekstr
             alrm_hour  = data[8]
             alrm_min   = data[9]
             alrm_sec   = data[10]
             alrm_scene = data[11]
-            alrm_hourStr = '{:02d} hour'.format(alrm_hour)
-            alrm_minStr = '{:02d} min'.format(alrm_min)
-            alrm_secStr = '{:02d} sec'.format(alrm_sec)
             alrm_sceneStr = '{:d}'.format(alrm_scene)
             alrm_indexStr = '{:d}'.format(alrm_index)
             timeStr = '{:02d}:{:02d}:{:02d}'.format(alrm_hour, alrm_min, alrm_sec)
             #if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
             mesg = {"device_name":name, "device_id":devaddr, "type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr, "alarm_days":alrm_dayomStr}
-            jstr = json.dumps(mesg)
-            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
-            if m_client:
-                m_client.publish(topic, jstr.encode('utf-8'))
+    elif opcode == 0xE9:
+        # Time get
+        year = data[3] + (data[4] << 8)
+        month = data[5]
+        day = data[6]
+        date_str = '{:d}-{:d}-{:d}'.format(year, month, day)
+        hr = data[7]
+        mi = data[8]
+        sc = data[9]
+        time_str = '{:02d}:{:02d}:{:02d}'.format(hr, mi, sc)
+        mesg = {"device_name":name, "device_id":devaddr, "type":"time", "time":time_str, "date":date_str}
     elif opcode == 0xEB:
         # Astro timers
         cbs = data[4]       # data[3] is fixed to 0x01
@@ -585,16 +580,12 @@ def process_callback(devaddr, callback):
                 tz_ew = 'West'
             tz = data[12]
             mesg = {"device_name":name, "device_id":devaddr, "type":"astro", "meridian":meridian, "longitute":longstr, "equator":equator, "latitude":latstr, "timezone_dir":tz_ew, "timezone":tz}
-            jstr = json.dumps(mesg)
-            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
-            if m_client:
-                m_client.publish(topic, jstr.encode('utf-8'))
-        if cbs == 0x82 or cbs == 0x83:     # Got Sunrise/Sunset time report
+        elif cbs == 0x82 or cbs == 0x83:     # Got Sunrise/Sunset time report
             time_h = data[5]
             time_m = data[6]
             if cbs == 0x82:
                 rtype = "Sunrise"
-            if cbs == 0x83:     # Got Sunset time
+            elif cbs == 0x83:     # Got Sunset time
                 rtype = "Sunset"
             if data[14] != 0xFF:
                 statusStr = m_rdevstatuses[data[7]]
@@ -612,11 +603,7 @@ def process_callback(devaddr, callback):
                 mesg['deviceName'] = name
                 mesg['deviceID'] = devaddr
                 mesg['type'] = 'astro'
-            jstr = json.dumps(mesg)
-            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
-            if m_client:
-                m_client.publish(topic, jstr.encode('utf-8'))
-        if cbs == 0x84:
+        elif cbs == 0x84:
             # Get DST
             summer_start_month = data[5]
             summer_start_day = data[6]
@@ -635,11 +622,7 @@ def process_callback(devaddr, callback):
                 winter_comp = 1
             winter_offset = winter_comp * data[12]
             mesg = {"device_name":name, "device_id":devaddr, "summer_start_d_m":summer_start_str, "summer_offset":summer_offset, "winter_start_d_m":winter_start_str, "winter_offset":winter_offset}
-            jstr = json.dumps(mesg)
-            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
-            if m_client:
-                m_client.publish(topic, jstr.encode('utf-8'))
-        if cbs == 0x85:     # Calculated astro time settings
+        elif cbs == 0x85:     # Calculated astro time settings
             # +DATA:000b,23,EB110201850000000000000000000007000003B85B7FFD   
             # We look at Adjusted data only     
             sunrise_h_dst = data[9]
@@ -654,13 +637,10 @@ def process_callback(devaddr, callback):
             sunset_dst = '{:02d}:{:02d}'.format(sunset_h_dst, sunset_m_dst)
             if DEBUG: print("INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
             mesg = {"device_name":name, "device_id":devaddr, "sunrise":sunrise_dst, "sunset":sunset_dst}
-            jstr = json.dumps(mesg)
-            if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
-            if m_client:
-                m_client.publish(topic, jstr.encode('utf-8'))
     else:
         if DEBUG: print("Unsupported call back opcode %s" % opcode)
         return
+    update_status_mqtt(mesg)
 
 
 def update_hass(name, state, brightness, cct):
@@ -682,6 +662,23 @@ def update_hass(name, state, brightness, cct):
     if DEBUG: print("update_hass(): Pub mesg: %s" % hass_mesg)
     if m_client:
         m_client.publish(hass_state_topic, hass_mesg.encode('utf-8'))
+
+
+def update_status_mqtt(mesg):
+    global DEBUG, MQTT_PUB_TOPIC_STATUS, m_client
+    if mesg is None:
+        return
+    if mesg == {}:
+        return
+    topic = MQTT_PUB_TOPIC_STATUS
+    try:
+        jstr = json.dumps(mesg)
+    except:
+        print("ERROR: update_status_mqtt(mesg) has invalid mesg")
+        return
+    if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
+    if m_client:
+        m_client.publish(topic, jstr.encode('utf-8'))
 
 
 def process_command(mqttcmd):
@@ -780,6 +777,9 @@ def process_command(mqttcmd):
             elif (hcmd == "get_astro"):
                 cmd(did, 0xea, [0x08, 0x85])
                 _expectedCallBack = [0xeb, 0x85]
+            elif (hcmd == "get_time"):
+                cmd(did, 0xe8, [0x10])
+                _expectedCallBack = [0xe9, 0x00]
             elif (hcmd == "get_power"):
                 cmd(did, 0xc0, [0x08, 0xe1])
                 _expectedCallBack = [0xc1, 0xe1]
@@ -789,7 +789,7 @@ def process_command(mqttcmd):
             elif (hcmd == "get_timer"):
                 if (hexdata != ''):
                     i = int(hexdata)
-                    if (i > 15):
+                    if (i > 16):
                         print("ERROR: Only 16 timers")
                     else:
                         data = i.to_bytes(1, 'big')
@@ -798,7 +798,7 @@ def process_command(mqttcmd):
             elif (hcmd == "get_scene"):
                 if (hexdata != ''):
                     i = int(hexdata)
-                    if (i > 15):
+                    if (i > 16):
                         print("ERROR: Only 16 scenes")
                     else:
                         data = i.to_bytes(1, 'big')
@@ -1102,25 +1102,12 @@ def check_reset():
 
 
 def displayInit():
-    if not USEOLED:
-        return
-    oled.fill(0)
-    # oled.text(String,X-pixels,y-Pixels)
-    wri_m.set_textpos(oled, 0, 0)  # verbose = False to suppress console output
-    wri_m.printstring('BleuSky')
-    # Show on display
-    oled.show()
+    return
 
 
 def print_progress(msg):
     if DEBUG: print("Progress: %s" % msg)
-    if not USEOLED:
-        return
-    wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
-    wri_m.printstring("                            ")
-    wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
-    wri_m.printstring(msg)
-    oled.show()
+    return
 
 
 def print_status(statusflag):
@@ -1135,63 +1122,38 @@ def print_status(statusflag):
         else:
             m_systemstatus = m_systemstatus | st
         st = m_systemstatus
-    if USEOLED:
-        if st == 0:
-            msg = "Ready"
-        elif st == EXIT_FLAG:
-            msg = EXIT_SYMB
-        else:
-            if st & STATUS_FROM_MESH:
-                msg = STATUS_FROM_MESH_SYMB
-            elif st & STATUS_TO_MESH:
-                msg = STATUS_TO_MESH_SYMB
-            else:
-                msg = "ERR: "
-                if st & WIFI_ERROR_FLAG:
-                    msg = msg + ' ' + WIFI_ERROR_SYMB
-                if st & BT_ERROR_FLAG:
-                    msg = msg + ' ' + BT_ERROR_SYMB
-                if st & MQTT_ERROR_FLAG:
-                    msg = msg + ' ' + MQTT_ERROR_SYMB
-                if st & BTMOD_ERROR_FLAG:
-                    msg = msg + ' ' + BTMOD_ERROR_SYMB
-        wri_m.set_textpos(oled, 50, 0)  # verbose = False to suppress console output
-        wri_m.printstring("                        ")
-        wri_m.set_textpos(oled, 50, 0)  # verbose = False to suppress console output
-        wri_m.printstring(msg)
-        oled.show()
+
+    if DEBUG: print("print_status(): st = %d" % st)
+    if st & WIFI_ERROR_FLAG:
+        error_indicator(1)
+    elif st & WIFI_CONNECTING:
+        error_indicator(2, 1)
     else:
-        if DEBUG: print("print_status(): st = %d" % st)
-        if st & WIFI_ERROR_FLAG:
-            error_indicator(1)
-        elif st & WIFI_CONNECTING:
-            error_indicator(2, 1)
-        else:
-            error_indicator(2)
-        if st & BT_ERROR_FLAG:
-            error_indicator(3)
-        else:
-            error_indicator(4)
-        if st & MQTT_ERROR_FLAG:
-            error_indicator(5)
-        else:
-            error_indicator(6)
-        if st & BTMOD_ERROR_FLAG:
-            error_indicator(3, 1)
-        else:
-            error_indicator(4)
-        if st & ALT_CONFIG:
-            error_indicator(6, 1)
-        else:
-            error_indicator(6)
-        if st == 0:
-            error_indicator(0)
-        if st == EXIT_FLAG:
-            error_indicator(0, 1)
+        error_indicator(2)
+    if st & BT_ERROR_FLAG:
+        error_indicator(3)
+    else:
+        error_indicator(4)
+    if st & MQTT_ERROR_FLAG:
+        error_indicator(5)
+    else:
+        error_indicator(6)
+    if st & BTMOD_ERROR_FLAG:
+        error_indicator(3, 1)
+    else:
+        error_indicator(4)
+    if st & ALT_CONFIG:
+        error_indicator(6, 1)
+    else:
+        error_indicator(6)
+    if st == 0:
+        error_indicator(0)
+    if st == EXIT_FLAG:
+        error_indicator(0, 1)
 
 def error_indicator(n, flashmode=0, onoff=1):
     global led, status_led, pwmled, DEBUG
-    if DEBUG: print("error_indicator(): n = %d, flashmode = %d, onoff = %d" % (n, flashmode, onoff))
+#    if DEBUG: print("error_indicator(): n = %d, flashmode = %d, onoff = %d" % (n, flashmode, onoff))
     if n > 0:
         n = n - 1
         led[n].value(1)
@@ -1250,15 +1212,6 @@ def error_indicator(n, flashmode=0, onoff=1):
 
 
 
-if USEOLED:
-    i2c = I2C(scl=Pin(4), sda=Pin(5))
-    oled = ssd1306.SSD1306_I2C(128, 64, i2c)
-    wri_l = Writer(oled, nunito_r)
-    wri_v = Writer(oled, ostrich_r)
-    wri_m = Writer(oled, font6)
-    wri_m_len = wri_m.stringlen("999")
-    wri_v_len = wri_v.stringlen("9999")
-
 board_init()
 displayInit()
 
@@ -1276,18 +1229,10 @@ if key1.value() == 0:
 if released:
     """Button pressed during boot, change to config #2"""
     if DEBUG: print("DEBUG: Switch to alt config")
-    if USEOLED:
-        import config_oled_alt as config_alt
-    else:
-        import config_alt
+    import config_alt
     import secrets_alt
 
-    if USEOLED:
-        wri_m.set_textpos(oled, 16, 0)  # verbose = False to suppress console output
-        wri_m.printstring('Alternate config')
-        oled.show()
-    else:
-        print_status(ALT_CONFIG)
+    print_status(ALT_CONFIG)
 
     DEFAULT_MESHNAME = secrets_alt.DEFAULT_MESHNAME
     DEFAULT_MESHPWD = secrets_alt.DEFAULT_MESHPWD
@@ -1305,12 +1250,7 @@ if released:
     except:
         MQTT_PASS = None
 else:
-    if USEOLED:
-        wri_m.set_textpos(oled, 16, 0)  # verbose = False to suppress console output
-        wri_m.printstring('Default config')
-        oled.show()
-    else:
-        print_status(~ALT_CONFIG)
+    print_status(~ALT_CONFIG)
 
 if DEBUG: print("Connecting to Wi-Fi")
 wifi_error(2)
