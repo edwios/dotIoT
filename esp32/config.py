@@ -17,3 +17,5 @@ LED4 = Pin(21)
 LED5 = Pin(23)
 LED6 = Pin(22)
 KEY1 = Pin(35)
+
+N_LED = 6
