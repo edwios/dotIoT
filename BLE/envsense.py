@@ -1,9 +1,10 @@
 import sys
 import time
 from argparse import ArgumentParser
-
+import json
 from bluepy import btle  # linux only (no mac)
 
+DEBUG = False
 
 # BLE IoT Sensor Demo
 # Author: Gary Stafford
@@ -12,29 +13,35 @@ from bluepy import btle  # linux only (no mac)
 # To Run: python3 ./rasppi_ble_receiver.py d1:aa:89:0c:ee:82 <- MAC address - change me!
 
 
-def main():
-    # get args
-    args = get_args()
+def readenv(mac_address):
+    err = False
+    dt = time.strftime('%F %H:%M:%S')
 
-    print("Connecting...")
-    nano_sense = btle.Peripheral(args.mac_address, addrType=btle.ADDR_TYPE_RANDOM)
+    if DEBUG: print("Connecting...")
+    try:
+        nano_sense = btle.Peripheral(mac_address, addrType=btle.ADDR_TYPE_RANDOM)
+    except:
+        if DEBUG: print("Connection failed")
+        err = True
 
-    print("Discovering Services...")
+    if err:
+        return
+    if DEBUG: print("Discovering Services...")
     _ = nano_sense.services
     environmental_sensing_service = nano_sense.getServiceByUUID("181A")
 
-    print("Discovering Characteristics...")
+    if DEBUG: print("Discovering Characteristics...")
     _ = environmental_sensing_service.getCharacteristics()
+    t = read_temperature(environmental_sensing_service)
+    h = read_humidity(environmental_sensing_service)
+    p = read_pressure(environmental_sensing_service)
+    l = read_lux(environmental_sensing_service)
 
-    while True:
-        print("\n")
-        read_temperature(environmental_sensing_service)
-        read_humidity(environmental_sensing_service)
-        read_pressure(environmental_sensing_service)
-        read_lux(environmental_sensing_service)
-
-        # time.sleep(2) # transmission frequency set on IoT device
-
+    if DEBUG: print("Disconnecting...")
+    nano_sense.disconnect()
+    mesg = {"device_mac": mac_address, "type":"environment", "readings":{"temperature": t, "humidity": h, "pressure": p, "lux": l}, "datetime": dt}
+    jstr = json.dumps(mesg)
+    print(jstr)
 
 def byte_array_to_int(value):
     # Raw data is hexstring of int values, as a series of bytes, in little endian byte order
@@ -64,7 +71,7 @@ def split_color_str_to_array(value):
     # values[:] = [int(v) % 256 for v in values]
 
     # actual sensor is reading values are from 0 - 4097
-    print(f"12-bit Color values (r,g,b,a): {values}")
+    if DEBUG: print(f"12-bit Color values (r,g,b,a): {values}")
 
     values[:] = [round(int(v) / (4097 / 255), 0) for v in values]
 
@@ -104,7 +111,8 @@ def read_pressure(service):
     pressure = pressure_char.read()
     pressure = byte_array_to_int(pressure)
     pressure = decimal_exponent_one(pressure)
-    print(f"Barometric Pressure: {round(pressure, 2)} Pa")
+    if DEBUG: print(f"Barometric Pressure: {round(pressure, 2)} Pa")
+    return pressure
 
 
 def read_humidity(service):
@@ -112,7 +120,8 @@ def read_humidity(service):
     humidity = humidity_char.read()
     humidity = byte_array_to_int(humidity)
     humidity = decimal_exponent_two(humidity)
-    print(f"Humidity: {round(humidity, 2)}%")
+    if DEBUG: print(f"Humidity: {round(humidity, 2)}%")
+    return humidity
 
 
 def read_temperature(service):
@@ -120,22 +129,44 @@ def read_temperature(service):
     temperature = temperature_char.read()
     temperature = byte_array_to_int(temperature)
     temperature = decimal_exponent_two(temperature)
-    print(f"Temperature: {round(temperature, 2)}°C")
+    if DEBUG: print(f"Temperature: {round(temperature, 2)}°C")
+    return temperature
 
 def read_lux(service):
     lux_char = service.getCharacteristics("2A77")[0]
     lux = lux_char.read()
     lux = byte_array_to_int(lux)
     lux = decimal_exponent_two(lux)
-    print(f"Lux: {round(lux, 2)}lm")
+    if DEBUG: print(f"Lux: {round(lux, 2)}lm")
+    return lux
 
 
 def get_args():
     arg_parser = ArgumentParser(description="BLE IoT Sensor Demo")
-    arg_parser.add_argument('mac_address', help="MAC address of device to connect")
+    arg_parser.add_argument("-i", "--interval", help="Data collection interval", default=900)
+    arg_parser.add_argument("-m", "--mac_address", help="MAC address of device to connect", default="E7:7C:12:1F:73:24")
+    arg_parser.add_argument("-d", "--debug", help="Debug", default=False)
     args = arg_parser.parse_args()
     return args
 
+
+def main():
+    global DEBUG
+    # get args
+    args = get_args()
+    sleeptime = args.interval
+    mac_address = args.mac_address
+    DEBUG = args.debug
+    
+    counter = 0
+    while True:
+        readenv(mac_address)
+        if counter > 4:
+            s = sleeptime
+        else:
+            s = 5
+        counter = counter + 1
+        time.sleep(s)
 
 if __name__ == "__main__":
     main()
