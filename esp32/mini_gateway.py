@@ -350,6 +350,8 @@ def rev_lookup_device(devaddr):
                 name = None
             if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
             break
+    if name is None:
+        name = 'No name'
     return name
 
 
