@@ -636,8 +636,11 @@ def process_callback(devaddr, callback):
             sunset_dst = '{:02d}:{:02d}'.format(sunset_h_dst, sunset_m_dst)
             if DEBUG: print("INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
             mesg = {"device_name":name, "device_id":devaddr, "sunrise":sunrise_dst, "sunset":sunset_dst}
+        else:
+            if DEBUG: print("Unsupported call back subcommand %02X (%02X)" % (opcode, cbs))
+            return
     else:
-        if DEBUG: print("Unsupported call back opcode %s" % opcode)
+        if DEBUG: print("Unsupported call back opcode %02X" % opcode)
         return
     update_status_mqtt(mesg)
 
@@ -693,7 +696,7 @@ def process_command(mqttcmd):
                     Hall light/off
                     Table lamp/dim:25
     """
-    global DEBUG
+    global DEBUG, Meshname, Meshpass
     if DEBUG: print("Process command %s" % mqttcmd)
     print_progress(mqttcmd[:16])
     if mqttcmd is not '':
@@ -703,6 +706,9 @@ def process_command(mqttcmd):
                 return
             elif (mqttcmd == "nodebug"):
                 DEBUG = False
+                return
+            elif (mqttcmd == "refresh"):
+                setMeshParams(name=Meshname, pwd=Meshpass)
                 return
             else:
                 return
@@ -787,7 +793,10 @@ def process_command(mqttcmd):
                 _expectedCallBack = [0xdb, 0x00]
             elif (hcmd == "get_timer"):
                 if (hexdata != ''):
-                    i = int(hexdata)
+                    try:
+                        i = int(hexdata)
+                    except:
+                        print("ERROR: invalid parameters")
                     if (i > 16):
                         print("ERROR: Only 16 timers")
                     else:
@@ -796,13 +805,34 @@ def process_command(mqttcmd):
                         _expectedCallBack = [0xe7, 0xa5]
             elif (hcmd == "get_scene"):
                 if (hexdata != ''):
-                    i = int(hexdata)
+                    try:
+                        i = int(hexdata)
+                    except:
+                        print("ERROR: invalid parameters")
                     if (i > 16):
                         print("ERROR: Only 16 scenes")
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xc0, [0x10] + list(data))
                         _expectedCallBack = [0xc1, 0x00]
+            elif (hcmd == "set_time"):
+                if (hexdata != ''):
+                    # Parse date time string yyyy,mo,dd,hh,mm,ss
+                    try:
+                        (yyyy,mo,dd,hh,mm,ss) = hexdata.split(',')
+                    except:
+                        print("ERROR: invalid parameters, yyyy,mo,dd,hh,mm,ss")
+                    else:
+                        settimeStr(did, yyyy,mo,dd,hh,mm,ss)
+            elif (hcmd == "set_dst"):
+                if (hexdata != ''):
+                    # Parse DST string Bmm,Bdd,Emm,Edd,Offset,Enabled
+                    try:
+                        (bmm, bdd, emm, edd, ofs, ena) = hexdata.split(',')
+                    except:
+                        print("ERROR: invalid parameters, Bmm,Bdd,Emm,Edd,Offset (int),Enabled (0|1)")
+                    else:
+                        setdst(did, bmm, bdd, emm, edd, ofs, ena)
             elif (hcmd == 'raw'):
                 if hexdata != '':
                     hexlist = list(hexdata[i:i+2] for i in range(0, len(hexdata), 2))
@@ -828,6 +858,67 @@ def process_command(mqttcmd):
                             p = 0
                         pars.append(p)
                     cmd(did, c, pars)
+
+
+def isDst(day, month, dow):
+    if (month < 3) or (month > 10):
+        return False
+    if (month > 3) and (month < 10):
+        return True
+
+    previousSunday = day - dow
+
+    if (month == 3):
+        return (previousSunday >= 25)
+    if (month == 10):
+        return (previousSunday < 25)
+
+    return False  # this line never gonna happend
+
+
+
+def setdst(did, bmm, bdd, emm, edd, offset, enabled):
+    try:
+        bm = int(bmm)
+        bd = int(bdd)
+        em = int(emm)
+        ed = int(edd)
+        of = int(offset)
+        en = int(enabled)
+    except:
+        return
+    ofs = 1 # 1 = +ve, 0 = -ve
+    if of < 0:
+        ofs = 0
+        of = abs(of)
+    data = [en, bm, bd, ofs, of, em, ed, 1 - ofs, 0]
+    # Let's do it by setting the time to ALL devices (thus 0xFFFF)
+    cmd(did, 0xf5, [0x0a] + list(data))
+    
+
+
+def settimeStr(did, yyyy='0',mo='0',dd='0',hh='0',mm='0',ss='0'):
+    try:
+        y = int(yyyy)
+        m = int(mo)
+        d = int(dd)
+        h = int(hh)
+        n = int(mm)
+        s = int(ss)
+    except:
+        return
+    settime(did, y, m, d, h, n, s)
+
+
+def settime(did, yyyy=0,mo=0,dd=0,hh=0,mm=0,ss=0):
+    if (yyyy <= 1970):
+        # Set current time to device
+        (yyyy,mo,dd,hh,mm,ss,_,_) = time.localtime()
+    yh = yyyy // 256
+    yl = yyyy % 256
+    data = [yl, yh, mo, dd, hh, mm, ss]
+    # Let's do it by setting the time to ALL devices (thus 0xFFFF)
+    cmd(did, 0xe4, data)
 
 
 def process_hass(topic, msg):
