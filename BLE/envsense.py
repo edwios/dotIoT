@@ -1,10 +1,21 @@
+#!/usr/bin/env python3
+
 import sys
 import time
 from argparse import ArgumentParser
 import json
 from bluepy import btle  # linux only (no mac)
+import paho.mqtt.client as mqtt
+import secrets
+import deviceconfig
 
 DEBUG = False
+
+MQTT_PUB_TOPIC_STATUS = 'sensornet/env/{:s}/status'
+MQTT_USER = secrets.MQTT_USER
+MQTT_PASS = secrets.MQTT_PASS
+
+m_devicemapping = deviceconfig.devices
 
 # BLE IoT Sensor Demo
 # Author: Gary Stafford
@@ -13,35 +24,75 @@ DEBUG = False
 # To Run: python3 ./rasppi_ble_receiver.py d1:aa:89:0c:ee:82 <- MAC address - change me!
 
 
-def readenv(mac_address):
+def readenv(mac_address, client, iface):
     err = False
     dt = time.strftime('%F %H:%M:%S')
-
     if DEBUG: print("Connecting...")
     try:
-        nano_sense = btle.Peripheral(mac_address, addrType=btle.ADDR_TYPE_RANDOM)
+        nano_sense = btle.Peripheral(mac_address, addrType=btle.ADDR_TYPE_RANDOM, iface=iface)
     except:
         if DEBUG: print("Connection failed")
         err = True
-
     if err:
         return
     if DEBUG: print("Discovering Services...")
-    _ = nano_sense.services
-    environmental_sensing_service = nano_sense.getServiceByUUID("181A")
-
+    try:
+        _ = nano_sense.services
+        environmental_sensing_service = nano_sense.getServiceByUUID("181A")
+    except:
+        print("ERROR: Device %s provides no such service" % mac_address)
+        try:
+            nano_sense.disconnect()
+        except:
+            pass
+        return
     if DEBUG: print("Discovering Characteristics...")
-    _ = environmental_sensing_service.getCharacteristics()
-    t = read_temperature(environmental_sensing_service)
-    h = read_humidity(environmental_sensing_service)
-    p = read_pressure(environmental_sensing_service)
-    l = read_lux(environmental_sensing_service)
-
+    try:
+        ac = environmental_sensing_service.getCharacteristics()
+    except:
+        print("ERROR: Device %s provides no characteristic!" % mac_address)
+        try:
+            nano_sense.disconnect()
+        except:
+            pass
+        return
+    if ac.count == 0:
+        print("ERROR: Device %s provides no characteristic!" % mac_address)
+        try:
+            nano_sense.disconnect()
+        except:
+            pass
+        return        
+    st, t = read_temperature(environmental_sensing_service)
+    sh, h = read_humidity(environmental_sensing_service)
+    sp, p = read_pressure(environmental_sensing_service)
+    sl, l = read_lux(environmental_sensing_service)
     if DEBUG: print("Disconnecting...")
-    nano_sense.disconnect()
-    mesg = {"device_mac": mac_address, "type":"environment", "readings":{"temperature": t, "humidity": h, "pressure": p, "lux": l}, "datetime": dt}
+    try:
+        nano_sense.disconnect()
+    except:
+        pass
+    res = {}
+    if (st == 0):
+        res['temperature'] = t
+    if (sh == 0):
+        res['humidity'] = h
+    if (sp == 0):
+        res['pressure'] = p
+    if (sl == 0):
+        res['lux'] = l
+    try:
+        devicename = m_devicemapping[mac_address]
+    except:
+        devicename = mac_address
+    mesg = {"device_mac": mac_address, "type":"environment", "datetime": dt, "device_name":devicename}
+    mesg['readings'] = res
     jstr = json.dumps(mesg)
-    print(jstr)
+    if DEBUG: print(jstr)
+    mtopic = MQTT_PUB_TOPIC_STATUS.format(devicename)
+    if client:
+        client.publish(mtopic, jstr)
+
 
 def byte_array_to_int(value):
     # Raw data is hexstring of int values, as a series of bytes, in little endian byte order
@@ -51,7 +102,7 @@ def byte_array_to_int(value):
     # print(f"{sys._getframe().f_code.co_name}: {value}")
 
     value = bytearray(value)
-    value = int.from_bytes(value, byteorder="little")
+    value = int.from_bytes(value, byteorder="little", signed=True)
     return value
 
 
@@ -107,66 +158,141 @@ def celsius_to_fahrenheit(value):
 
 
 def read_pressure(service):
-    pressure_char = service.getCharacteristics("2A6D")[0]
+    try:
+        pressure_char = service.getCharacteristics("2A6D")[0]
+    except:
+        return (1, 0)
     pressure = pressure_char.read()
     pressure = byte_array_to_int(pressure)
-    pressure = decimal_exponent_one(pressure)
+    if pressure > 5000:
+        pressure = decimal_exponent_one(pressure)
     if DEBUG: print(f"Barometric Pressure: {round(pressure, 2)} Pa")
-    return pressure
+    return (0, pressure)
 
 
 def read_humidity(service):
-    humidity_char = service.getCharacteristics("2A6F")[0]
+    try:
+        humidity_char = service.getCharacteristics("2A6F")[0]
+    except:
+        return (1, 0)
     humidity = humidity_char.read()
     humidity = byte_array_to_int(humidity)
     humidity = decimal_exponent_two(humidity)
     if DEBUG: print(f"Humidity: {round(humidity, 2)}%")
-    return humidity
+    return (0, humidity)
 
 
 def read_temperature(service):
-    temperature_char = service.getCharacteristics("2A6E")[0]
+    try:
+        temperature_char = service.getCharacteristics("2A6E")[0]
+    except:
+        return (1, 0)
     temperature = temperature_char.read()
     temperature = byte_array_to_int(temperature)
     temperature = decimal_exponent_two(temperature)
     if DEBUG: print(f"Temperature: {round(temperature, 2)}°C")
-    return temperature
+    return (0, temperature)
 
 def read_lux(service):
-    lux_char = service.getCharacteristics("2A77")[0]
+    try:
+        lux_char = service.getCharacteristics("2A77")[0]
+    except:
+        return (1, 0)
     lux = lux_char.read()
     lux = byte_array_to_int(lux)
     lux = decimal_exponent_two(lux)
     if DEBUG: print(f"Lux: {round(lux, 2)}lm")
-    return lux
+    return (0, lux)
 
 
 def get_args():
     arg_parser = ArgumentParser(description="BLE IoT Sensor Demo")
-    arg_parser.add_argument("-i", "--interval", help="Data collection interval", default=900)
-    arg_parser.add_argument("-m", "--mac_address", help="MAC address of device to connect", default="E7:7C:12:1F:73:24")
+    arg_parser.add_argument("-t", "--interval", help="Data collection interval", default=900)
+    arg_parser.add_argument("-i", "--interface", help="BLE interface", default=0)
+    arg_parser.add_argument("-m", "--mac", help="MAC address of device to connect", default=None)
     arg_parser.add_argument("-d", "--debug", help="Debug", default=False)
+    arg_parser.add_argument("-H", "--mqtt", help="MQTT broker address ", default="10.0.1.250")
     args = arg_parser.parse_args()
     return args
 
 
+def on_connect(client, userdata, flags, rc):
+    global m_connected, DEBUG
+
+    m_connected = True
+    if DEBUG: print("%s Debug: MQTT broker connected" % time.strftime('%F %H:%M:%S'))
+    # Subscribing in on_connect() means that if we lose the connection and
+    # reconnect then subscriptions will be renewed.
+    #    client.subscribe([("sensornet/env/home/balcony/temperature", 0), ("sensornet/env/home/balcony/humidity", 0), ("sensornet/env/home/living/aqi", 0)])
+    # client.subscribe([("sensornet/env/balcony/brightness", 0), ("sensornet/all", 0), ("sensornet/command", 0)])
+
+def on_disconnect(client, userdata, rc):
+    global m_connected, DEBUG
+    m_connected = False
+    if rc != 0:
+        print("%s INFO: MQTT broker disconnected, will not try agian" % time.strftime('%F %H:%M:%S'))
+
+def on_publish(client, userdata, result):
+    pass
+
+# The callback for when a PUBLISH message is received from the broker.
+def on_message(client, userdata, msg):
+    pass
+
+def mqttinit(mqtthub, port=1883):
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_publish = on_publish
+    client.on_disconnect = on_disconnect
+    client.on_message = on_message
+    if DEBUG: print("%s DEBUG: Connecting to mqtt host %s" % (time.strftime('%F %H:%M:%S'), mqtthub))
+    client.username_pw_set(username=MQTT_USER, password=MQTT_PASS)
+    client.connect_async(mqtthub, port, 60)
+    client.loop_start() #start loop to process received messages
+    return client
+
+
+m_connected = False
+m_auto_reconnect = True
+
 def main():
     global DEBUG
+    global m_connected, m_auto_reconnect, m_devicemapping
+
     # get args
     args = get_args()
-    sleeptime = args.interval
-    mac_address = args.mac_address
+    sleeptime = int(args.interval)
+    mac_address = args.mac
     DEBUG = args.debug
+    mqtt_hub = args.mqtt
+    iface = args.interface
+
+    m_connected = False
+    m_auto_reconnect = False
     
-    counter = 0
+    mqttclient = mqttinit(mqtt_hub)
+    counter = 5
+    pause_time = 0
+    last = time.monotonic()
     while True:
-        readenv(mac_address)
-        if counter > 4:
-            s = sleeptime
-        else:
-            s = 5
-        counter = counter + 1
-        time.sleep(s)
+        if (time.monotonic() - last > pause_time):
+            last = time.monotonic()
+            if mac_address is None:
+                for mac in m_devicemapping:
+                    if DEBUG: print("Reading from {:s}".format(mac))
+                    readenv(mac, mqttclient, iface)
+                    time.sleep(30)
+            else:
+                readenv(mac_address, mqttclient, iface)
+            if counter == 0:
+                pause_time = sleeptime
+            else:
+                pause_time = 30
+            if counter > 0:
+                counter = counter - 1
+        if (not m_connected) and m_auto_reconnect:
+            mqttclient = mqttinit(mqtt_hub)
+        time.sleep(0.1)
 
 if __name__ == "__main__":
     main()
