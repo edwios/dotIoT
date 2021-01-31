@@ -62,11 +62,31 @@ def readenv(mac_address, client, iface):
             nano_sense.disconnect()
         except:
             pass
-        return        
-    st, t = read_temperature(environmental_sensing_service)
-    sh, h = read_humidity(environmental_sensing_service)
-    sp, p = read_pressure(environmental_sensing_service)
-    sl, l = read_lux(environmental_sensing_service)
+        return
+    count = 5
+    st = 1
+    while (st != 0) and (count > 0):     
+        st, t = read_temperature(environmental_sensing_service)
+        time.sleep(2)
+        count = count - 1
+    count = 5
+    sh = 1
+    while (sh != 0) and (count > 0):     
+        sh, h = read_humidity(environmental_sensing_service)
+        time.sleep(2)
+        count = count - 1
+    count = 5
+    sp = 1
+    while (sp != 0) and (count > 0):     
+        sp, p = read_pressure(environmental_sensing_service)
+        time.sleep(2)
+        count = count - 1
+    count = 5
+    sl = 1
+    while (sl != 0) and (count > 0):
+        sl, l = read_lux(environmental_sensing_service)
+        time.sleep(2)
+        count = count - 1
     if DEBUG: print("Disconnecting...")
     try:
         nano_sense.disconnect()
@@ -75,18 +95,28 @@ def readenv(mac_address, client, iface):
     res = {}
     if (st == 0):
         res['temperature'] = t
+    else:
+        print("ERROR: Cannot read temperature from evice %s!" % mac_address)
     if (sh == 0):
         res['humidity'] = h
+    else:
+        print("ERROR: Cannot read humidity from evice %s!" % mac_address)
     if (sp == 0):
         res['pressure'] = p
+    else:
+        print("ERROR: Cannot read pressure from evice %s!" % mac_address)
     if (sl == 0):
         res['lux'] = l
+    else:
+        print("ERROR: Cannot read lux from evice %s!" % mac_address)
     try:
         devicename = m_devicemapping[mac_address]
     except:
         devicename = mac_address
     mesg = {"device_mac": mac_address, "type":"environment", "datetime": dt, "device_name":devicename}
     mesg['readings'] = res
+    mesg['state'] = 'ON'
+    mesg['epoch'] = int(time.clock_gettime(0))
     jstr = json.dumps(mesg)
     if DEBUG: print(jstr)
     mtopic = MQTT_PUB_TOPIC_STATUS.format(devicename)
@@ -200,8 +230,7 @@ def read_lux(service):
         return (1, 0)
     lux = lux_char.read()
     lux = byte_array_to_int(lux)
-    lux = decimal_exponent_two(lux)
-    if DEBUG: print(f"Lux: {round(lux, 2)}lm")
+    if DEBUG: print(f"Lux: {lux}lm")
     return (0, lux)
 
 
