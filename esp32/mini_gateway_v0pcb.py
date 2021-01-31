@@ -1,4 +1,4 @@
-DEBUG = True    # Global debug printing
+DEBUG = False    # Global debug printing
 USEOLED = False
 
 import time
@@ -51,7 +51,7 @@ Mesh_Secrets = CACHEDIR + '/' + MESH_SECRTES_NAME
 LED1 = config.LED1
 LED2 = config.LED2
 KEY1 = config.KEY1
-NLED = config.NLED
+NLED = config.N_LED
 
 ON_DATA = [1, 1, 0]
 OFF_DATA = [0, 1, 0]
@@ -81,13 +81,13 @@ MESH_CONNECTING = 128
 STATUS_TO_MESH = 256
 STATUS_FROM_MESH = 512
 EXIT_FLAG = 0x7F
-WIFI_ERROR_SYMB = "Wi-Fi"
-BT_ERROR_SYMB = "MESH"
-MQTT_ERROR_SYMB = "MQTT"
-BTMOD_ERROR_SYMB = "BTMOD"
-STATUS_TO_MESH_SYMB = ">>>Mesh"
-STATUS_FROM_MESH_SYMB = "Mesh>>>"
-EXIT_SYMB = "QUIT"
+#WIFI_ERROR_SYMB = "Wi-Fi"
+#BT_ERROR_SYMB = "MESH"
+#MQTT_ERROR_SYMB = "MQTT"
+#BTMOD_ERROR_SYMB = "BTMOD"
+#STATUS_TO_MESH_SYMB = ">>>Mesh"
+#STATUS_FROM_MESH_SYMB = "Mesh>>>"
+#EXIT_SYMB = "QUIT"
 
 m_rdevstatuses = ["disabled", "enabled"]
 m_rastrooffsets = ["before", "after"]
@@ -100,7 +100,7 @@ def do_connect(ssid, pwd):
     import network
     sta_if = network.WLAN(network.STA_IF)
     if not sta_if.isconnected():
-        if DEBUG: print('connecting to network...')
+        # # if DEBUG: print('connecting to network...')
         sta_if.active(True)
         time.sleep(0.5)
         sta_if.connect(ssid, pwd)
@@ -111,7 +111,7 @@ def do_connect(ssid, pwd):
             WiFi_connected = False
             print("Error: timeout connecting to WLAN %s" % ssid)
         else:
-            if DEBUG: print("Connected to Wi-Fi")
+            # # if DEBUG: print("Connected to Wi-Fi")
             WiFi_connected = True
         if WiFi_connected and DEBUG: print('Wi-Fi connected, network config:', sta_if.ifconfig())
         return WiFi_connected
@@ -121,7 +121,7 @@ def on_message(topic, msg):
     """Callback for MQTT published messages """
     m = msg.decode("utf-8")
     t = topic.decode("utf-8")
-    if DEBUG: print('MQTT received: %s from %s' % (m, t))
+    # if DEBUG: print('MQTT received: %s from %s' % (m, t))
     if (t == MQTT_SUB_TOPIC_CMD):
         process_command(m)
     if (t == MQTT_PUB_TOPIC_STATUS):
@@ -150,7 +150,7 @@ def initMQTT():
 
 def _send_command(cmd: str = 'AT'):
     """Internal method to send AT commands to BLE module appending 0D0A to the end"""
-    if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
+    # if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
     print_status(STATUS_TO_MESH)
 #    cmd = cmd + '\r\n'
     m_uart.write(cmd)
@@ -226,7 +226,7 @@ def setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
 
 def cacheMeshSecrets(name, pwd, cache_path=Mesh_Secrets):
     """Store mesh secrets in Flash"""
-    if DEBUG: print("Create cache for mesh secrets in %s" % cache_path)
+    # if DEBUG: print("Create cache for mesh secrets in %s" % cache_path)
     meshsecrets = ujson.loads('{' + '"meshname":"{:s}", "meshpass":"{:s}"'.format(name, pwd) +'}')
     if cache_path is None:
         return None
@@ -237,23 +237,23 @@ def cacheMeshSecrets(name, pwd, cache_path=Mesh_Secrets):
     else:
         filep.write(ujson.dumps(meshsecrets))
         filep.close()
-        if DEBUG: print("DEBUG: Cache for mesh secrets created")
+        # if DEBUG: print("DEBUG: Cache for mesh secrets created")
     return meshsecrets
 
 
 def retrieveMeshSecrets(def_name=DEFAULT_MESHNAME, def_pass=DEFAULT_MESHPWD, cache_path=Mesh_Secrets):
     """Get the stored or default mesh secrets"""
-    if DEBUG: print("DEBUG: Retrieving mesh secrets from %s" % Mesh_Secrets)
+    # if DEBUG: print("DEBUG: Retrieving mesh secrets from %s" % Mesh_Secrets)
     if cache_path is None:
         return None
     try:
         filep = open(cache_path, 'r')
     except:
         # Mesh secrets not exist, create one
-        if DEBUG: print("DEBUG: No mesh secret stored yet, creating one")
+        # if DEBUG: print("DEBUG: No mesh secret stored yet, creating one")
         meshsecrets = cacheMeshSecrets(def_name, def_pass, cache_path)
     else:
-        if DEBUG: print("DEBUG: Reading mesh secrets from cache")
+        # if DEBUG: print("DEBUG: Reading mesh secrets from cache")
         jj = filep.read()
         meshsecrets = ujson.loads(jj)
         filep.close()
@@ -263,7 +263,7 @@ def retrieveMeshSecrets(def_name=DEFAULT_MESHNAME, def_pass=DEFAULT_MESHPWD, cac
 def refresh_devices(config, cache_path):
     """Refresh devices from configuration received"""
     global m_devices, Device_Cache
-    if DEBUG: print("DEBUG: Refreshing device database")
+    # if DEBUG: print("DEBUG: Refreshing device database")
     print_progress("Refresh devices")
     try:
         m_devices = config['devices']
@@ -278,24 +278,25 @@ def refresh_devices(config, cache_path):
         else:
             filep.write(ujson.dumps(m_devices))
             filep.close()
-            if DEBUG: print("DEBUG: Written device DB to cache")
+            # if DEBUG: print("DEBUG: Written device DB to cache")
     return m_devices
 
 
 
 def retrieveDeviceDB(cache_path):
     """Restore device from DB"""
-    if DEBUG: print("Retrieving devices from cache %s" % cache_path)
+    # if DEBUG: print("Retrieving devices from cache %s" % cache_path)
     devices = None
     try:
         filep = open(cache_path, 'r')
     except:
-        if DEBUG: print("DEBUG: Device cache not exist yet")
+        # if DEBUG: print("DEBUG: Device cache not exist yet")
+        pass
     else:
         jj = filep.read()
         devices = ujson.loads(jj)
         filep.close()
-        if DEBUG: print("DEBUG: Device DB loaded from cache")
+        # if DEBUG: print("DEBUG: Device DB loaded from cache")
     return devices
 
 
@@ -305,7 +306,7 @@ def lookup_device(name):
     devaddr = 0
     if m_devices is None or name == '':
         return devaddr
-    if DEBUG: print("DEBUG: Looking up device ID from database")
+    # if DEBUG: print("DEBUG: Looking up device ID from database")
     for dev in m_devices:
         try:
             devname = dev['deviceName']
@@ -319,7 +320,7 @@ def lookup_device(name):
             if tmp > 255:
                 # from iOS share, the endian is wrong (<=v2.0.3)
                 devaddr = tmp >> 8 + ((tmp & 0x0F) << 8)
-            if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
+            # if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
             break
     return devaddr
 
@@ -330,7 +331,7 @@ def rev_lookup_device(devaddr):
     name = None
     if m_devices is None or devaddr == 0:
         return name
-    if DEBUG: print("DEBUG: Looking up device name from database")
+    # if DEBUG: print("DEBUG: Looking up device name from database")
     for dev in m_devices:
         try:
             tmp = dev['deviceAddress']
@@ -345,7 +346,7 @@ def rev_lookup_device(devaddr):
                 name = dev['deviceName']
             except:
                 name = None
-            if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
+            # if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
             break
     if name is None:
         name = 'No name'
@@ -382,7 +383,7 @@ def mesh_send_asc(dst: int = 0x00, cmd: int = 0xd0, data: str = None):
     if length == 0:
         return False
     atcommand = 'SEND={:s},{:s},{:s}{:s}'.format(dst, str(length), cmd, data)
-    if DEBUG: print("Sending to UART: %s" % atcommand)
+    # if DEBUG: print("Sending to UART: %s" % atcommand)
     trials = 0
     send_command(atcommand)
     while (not expect_reply('OK')) and (trials < 4):
@@ -419,11 +420,11 @@ def getReply(timeout=10):
             if file[0] == m_uart:
                 ch = m_uart.read(1)
                 data = data + chr(ch[0])
-                #if DEBUG: print("getReply: %s" % data)
+                ## if DEBUG: print("getReply: %s" % data)
 
     if data is not '':
         # Show the byte as 2 hex digits then in the default way
-        # if DEBUG: print("DEBUG: received from BLE module: %s " % data)
+        # # if DEBUG: print("DEBUG: received from BLE module: %s " % data)
         reply = []
         lines = data.split('\r\n')
         for line in lines:
@@ -433,8 +434,8 @@ def getReply(timeout=10):
                     m_cbreplies.append(line)
                 else:
                     reply.append(line)
-        if DEBUG: print("DEBUG: received %d lines of reply as %s" % (len(reply), reply))
-        if DEBUG: print("DEBUG: received %d lines of callbacks as %s" % (len(m_cbreplies), m_cbreplies))
+        # if DEBUG: print("DEBUG: received %d lines of reply as %s" % (len(reply), reply))
+        # if DEBUG: print("DEBUG: received %d lines of callbacks as %s" % (len(m_cbreplies), m_cbreplies))
         return reply
 
 
@@ -452,7 +453,7 @@ def check_callbacks():
             except:
                 devaddrstr = None
             if devaddrstr is not None:
-                if DEBUG: print("DEBUG: Got call back from %s" % devaddrstr)
+                # if DEBUG: print("DEBUG: Got call back from %s" % devaddrstr)
                 print_status(STATUS_FROM_MESH)
                 try:
                     t = ubinascii.unhexlify(devaddrstr)
@@ -473,7 +474,7 @@ def check_callbacks():
 
 def process_callback(devaddr, callback):
     global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG
-    if DEBUG: print("Processing call back from %04x" % devaddr)
+    # if DEBUG: print("Processing call back from %04x" % devaddr)
     name = rev_lookup_device(devaddr)
     if (name is None) or (callback is None):
         print("ERROR: process_callback(): cannot find device name with address %d or no callback is given" % devaddr)
@@ -493,7 +494,7 @@ def process_callback(devaddr, callback):
     opcode = data[0]   
     if opcode == 0xDC:
         # Status notify report
-        if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
+        # if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
         bgt = data[1]
         cct = data[2]
         state = None
@@ -542,7 +543,7 @@ def process_callback(devaddr, callback):
             alrm_sceneStr = '{:d}'.format(alrm_scene)
             alrm_indexStr = '{:d}'.format(alrm_index)
             timeStr = '{:02d}:{:02d}:{:02d}'.format(alrm_hour, alrm_min, alrm_sec)
-            #if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
+            ## if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
             mesg = {"device_name":name, "device_id":devaddr, "type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr, "alarm_days":alrm_dayomStr}
     elif opcode == 0xE9:
         # Time get
@@ -592,11 +593,11 @@ def process_callback(devaddr, callback):
                 offsettypeStr = m_rastrooffsets[data[9]]
                 offset_h = data[10]
                 offset_m = data[11]
-                offset_hStr = '{:02d} hour'.format(offset_h)
-                offset_mStr = '{:02d} min'.format(offset_m)
+                # offset_hStr = '{:02d} hour'.format(offset_h)
+                # offset_mStr = '{:02d} min'.format(offset_m)
                 timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
                 offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
-                if DEBUG: print("INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (name, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
+                # if DEBUG: print("INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (name, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
                 mesg = {"device_name":name, "device_id":devaddr, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
             else:
                 mesg['deviceName'] = name
@@ -634,20 +635,20 @@ def process_callback(devaddr, callback):
 #            sunset_m_dst = data[8]
             sunrise_dst = '{:02d}:{:02d}'.format(sunrise_h_dst, sunrise_m_dst)
             sunset_dst = '{:02d}:{:02d}'.format(sunset_h_dst, sunset_m_dst)
-            if DEBUG: print("INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
+            # if DEBUG: print("INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
             mesg = {"device_name":name, "device_id":devaddr, "sunrise":sunrise_dst, "sunset":sunset_dst}
         else:
-            if DEBUG: print("Unsupported call back subcommand %02X (%02X)" % (opcode, cbs))
+            # if DEBUG: print("Unsupported call back subcommand %02X (%02X)" % (opcode, cbs))
             return
     else:
-        if DEBUG: print("Unsupported call back opcode %02X" % opcode)
+        # if DEBUG: print("Unsupported call back opcode %02X" % opcode)
         return
     update_status_mqtt(mesg)
 
 
 def update_hass(name, state, brightness, cct):
     global DEBUG, m_client, MQTT_PUB_TOPIC_HASS_PREFIX
-    if DEBUG: print("update_hass(): Pub status for %s" % (name))
+    # if DEBUG: print("update_hass(): Pub status for %s" % (name))
     hass_state_topic = MQTT_PUB_TOPIC_HASS_PREFIX + name
     hass_mesg = '"device_name":"{:s}"'.format(name)
     if state is not None:
@@ -661,7 +662,7 @@ def update_hass(name, state, brightness, cct):
             hasscct = int(cct * 347 / 100 + 153)
         hass_mesg = hass_mesg + ',"color_temp":{:d}'.format(hasscct)
     hass_mesg = '{' + hass_mesg + '}'
-    if DEBUG: print("update_hass(): Pub mesg: %s" % hass_mesg)
+    # if DEBUG: print("update_hass(): Pub mesg: %s" % hass_mesg)
     if m_client:
         m_client.publish(hass_state_topic, hass_mesg.encode('utf-8'))
 
@@ -678,7 +679,7 @@ def update_status_mqtt(mesg):
     except:
         print("ERROR: update_status_mqtt(mesg) has invalid mesg")
         return
-    if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
+    # if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
     if m_client:
         m_client.publish(topic, jstr.encode('utf-8'))
 
@@ -697,7 +698,7 @@ def process_command(mqttcmd):
                     Table lamp/dim:25
     """
     global DEBUG, Meshname, Meshpass
-    if DEBUG: print("Process command %s" % mqttcmd)
+    # if DEBUG: print("Process command %s" % mqttcmd)
     print_progress(mqttcmd[:16])
     if mqttcmd is not '':
         if '/' not in mqttcmd:
@@ -724,7 +725,7 @@ def process_command(mqttcmd):
         except:
             did = lookup_device(dids)
         if (did > 0):
-            if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s, cmd: %s" % (mqttcmd, did, hcmd))
+            # if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s, cmd: %s" % (mqttcmd, did, hcmd))
             if (hcmd == "on"):
                 cmd(did, 0xd0, ON_DATA)
             elif (hcmd == "off"):
@@ -923,7 +924,7 @@ def settime(did, yyyy=0,mo=0,dd=0,hh=0,mm=0,ss=0):
 
 def process_hass(topic, msg):
     global DEBUG
-    if DEBUG: print("Process HASS command %s at topic %s" % (msg, topic))
+    # if DEBUG: print("Process HASS command %s at topic %s" % (msg, topic))
     ts = topic.split('/')
     if ts is None:
         # We don't handle topics without '/'
@@ -939,7 +940,7 @@ def process_hass(topic, msg):
         print("ERROR: process_hass(): Topic does not contain device name (%s)" % device_name)
         return
     if device_name is not None:
-        if DEBUG: print("HASS control of device %s" % device_name)
+        # if DEBUG: print("HASS control of device %s" % device_name)
         try:
             mqtt_json = json.loads(msg)
         except:
@@ -971,9 +972,9 @@ def process_hass(topic, msg):
             did = lookup_device(device_name)
         else:
             device_name = rev_lookup_device(did)
-        if DEBUG: print("HASS control %s for state: %s, brightness %s, cct: %s, color: %s" % (device_name, state, brightness, cct, color))
+        # if DEBUG: print("HASS control %s for state: %s, brightness %s, cct: %s, color: %s" % (device_name, state, brightness, cct, color))
         if (did > 0):
-            if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s" % (msg, did))
+            # if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s" % (msg, did))
             if (state == "on"):
                 cmd(did, 0xd0, ON_DATA)
             if (state == "off"):
@@ -1053,7 +1054,7 @@ def process_hass(topic, msg):
 
 def cmd(device_addr, op_code, pars):
     """Properly format mesh command before sending to mesh"""
-    if DEBUG: print("Sending to %s op code %s and pars %s" % (device_addr, op_code, pars))
+    # if DEBUG: print("Sending to %s op code %s and pars %s" % (device_addr, op_code, pars))
     Dstdev = '{:04x}'.format(device_addr)
     Opcode = '{:02x}'.format(op_code)
     Params = ''
@@ -1064,7 +1065,8 @@ def cmd(device_addr, op_code, pars):
 
 def process_status(status):
     """Process statuses received from Mesh"""
-    if DEBUG: print("Process status %s" % status)
+    # if DEBUG: print("Process status %s" % status)
+    pass
 
 
 def process_config(conf):
@@ -1076,7 +1078,7 @@ def process_config(conf):
     """
     global Meshname, Meshpass, m_devices
     config = None
-    if DEBUG: print("Process config %s" % conf)
+    # if DEBUG: print("Process config %s" % conf)
     print_progress("Renew config")
     try:
         config = ujson.loads(conf)
@@ -1090,7 +1092,7 @@ def process_config(conf):
         mn = Meshname
         mp = Meshpass
     if (mn != Meshname) or (mp != Meshpass):
-        if DEBUG: print("DEBUG: Setting new mesh name and password")
+        # if DEBUG: print("DEBUG: Setting new mesh name and password")
         Meshname = mn
         Meshpass = mp
         setMeshParams(mn, mp)
@@ -1135,6 +1137,7 @@ def blemodu_error(e):
 
 def exit_mode():
     """Exit willingly"""
+    global m_WiFi_connected
     m_WiFi_connected = do_connect(SSID, PASS) # If we want webrepl afterwards
     print_status(EXIT_FLAG)
     time.sleep(3)
@@ -1171,7 +1174,7 @@ def check_reset():
             return  # no key pressed so far
         # key released, check elapsed time on keypress
         t = time.ticks_ms() - m_rstcnt
-        if DEBUG: print("Elapse time: %f" % t)
+        # if DEBUG: print("Elapse time: %f" % t)
         if t > 50 and t < 1000:
             # perform reset only when key is pressed down for a while (debounce) but not too long (exit)
             print_status(0)
@@ -1188,13 +1191,13 @@ def displayInit():
 
 
 def print_progress(msg):
-    if DEBUG: print("Progress: %s" % msg)
+    # if DEBUG: print("Progress: %s" % msg)
     return
 
 
 def print_status(statusflag):
     global m_systemstatus, DEBUG
-    if DEBUG: print("print_status(): flag = %d" % statusflag)
+    # if DEBUG: print("print_status(): flag = %d" % statusflag)
     st = statusflag
     if (not USEOLED) and ((statusflag == STATUS_FROM_MESH) or (statusflag == STATUS_TO_MESH)):
         return
@@ -1205,7 +1208,7 @@ def print_status(statusflag):
             m_systemstatus = m_systemstatus | st
         st = m_systemstatus
 
-    if DEBUG: print("print_status(): st = %d" % st)
+    # if DEBUG: print("print_status(): st = %d" % st)
     if st & WIFI_ERROR_FLAG:
         error_indicator(1, 1)
     elif st & WIFI_CONNECTING:
@@ -1235,13 +1238,13 @@ def print_status(statusflag):
 
 def error_indicator(n, flashmode=0, onoff=1):
     global led, status_led, pwmled, DEBUG
-#    if DEBUG: print("error_indicator(): n = %d, flashmode = %d, onoff = %d" % (n, flashmode, onoff))
+#    # if DEBUG: print("error_indicator(): n = %d, flashmode = %d, onoff = %d" % (n, flashmode, onoff))
     if n > 0:
         n = n - 1
         led[n].value(1)
         if flashmode == 0:
                 if status_led[n] is not None:
-#                    if DEBUG: print("error_indicator(): resetting RMT/PWM for LED %d" % n)
+#                    # if DEBUG: print("error_indicator(): resetting RMT/PWM for LED %d" % n)
                     status_led[n].loop(False)
                     status_led[n].deinit()
                 if pwmled[n] is not None:
@@ -1313,7 +1316,7 @@ if key1.value() == 0:
 
 if released:
     """Button pressed during boot, change to config #2"""
-    if DEBUG: print("DEBUG: Switch to alt config")
+    # if DEBUG: print("DEBUG: Switch to alt config")
     import config_alt
     import secrets_alt
 
@@ -1337,14 +1340,14 @@ if released:
 else:
     print_status(~ALT_CONFIG)
 
-if DEBUG: print("Connecting to Wi-Fi")
+# if DEBUG: print("Connecting to Wi-Fi")
 wifi_error(2)
 m_WiFi_connected = do_connect(SSID, PASS)
 
 if m_WiFi_connected:
     print_progress("Wi-Fi OK")
     wifi_error(0)
-    if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
+    # if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
     if MQTT_USER == '':
         MQTT_USER = None
     if MQTT_PASS == '':
@@ -1360,7 +1363,7 @@ if m_WiFi_connected:
         m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
         mqtt_error(0)
 else:
-    if DEBUG: print("Error connecting to Wi-Fi")
+    # if DEBUG: print("Error connecting to Wi-Fi")
     wifi_error(1)
 
 
@@ -1377,10 +1380,10 @@ except:
 m_meshsecrets = retrieveMeshSecrets(DEFAULT_MESHNAME, DEFAULT_MESHPWD, Mesh_Secrets)
 Meshname = m_meshsecrets['meshname']
 Meshpass = m_meshsecrets['meshpass']
-if DEBUG: print("Using mesh name %s and pass %s" % (Meshname, Meshpass))
+# if DEBUG: print("Using mesh name %s and pass %s" % (Meshname, Meshpass))
 m_devices = retrieveDeviceDB(Device_Cache)
 
-if DEBUG: print("Initialising UART to BLE")
+# if DEBUG: print("Initialising UART to BLE")
 print_progress("Init UART")
 m_uart = UART(2, tx=18, rx=4)                         # init with given baudrate
 m_uart.init(115200, bits=8, parity=None, stop=1, timeout=10)
@@ -1401,14 +1404,29 @@ Opcode = ''
 
 setMeshParams(name=Meshname, pwd=Meshpass)
 
-print_progress("                ")
 #m_systemstatus = 0  # Reset system status so that new status can be updated within the loop
 print_status(m_systemstatus)
 time.sleep(0.1)
-if DEBUG: print("Entering infinte loop")
+# # if DEBUG: print("Entering infinte loop")
 while True:
     # Processes MQTT network traffic, callbacks and reconnections. (Blocking)
-    if m_client: m_client.check_msg()
+    if m_client: 
+        try:
+            m_client.check_msg()
+        except:
+            # # if DEBUG: print("MQTT broker not reachable")
+            m_client = None
+    if m_client is None:
+        try:
+            m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
+        except:
+            m_client = None
+        if not initMQTT():
+            mqtt_error(1)
+        else:
+            print_progress("MQTT OK")
+            m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
+            mqtt_error(0)
     check_callbacks()
     check_reset()
 
