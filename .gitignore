@@ -84,6 +84,7 @@ _archived_code
 copy2pi.sh
 BLE/copy2pi.sh
 secrets.py
+secrets.h
 secrets_alt.py
 .python-version
 
