@@ -12,18 +12,8 @@
 
 #define ARRAY_SIZE(arr)     (sizeof(arr) / sizeof((arr)[0]))
 
-//#define LOCATION_ID "studyroom"
-#define LOCATION_ID "outdoor"
-
-EspMQTTClient client(
-    SSID_NAME,
-    SSID_PASS,
-    MQTT_HOST,  // MQTT Broker server ip
-    MQTT_USER,   // Can be omitted if not needed
-    MQTT_PASS,   // Can be omitted if not needed
-    LOCATION_ID      // Client name that uniquely identify your device
-);
-
+#define DEFAULT_LOCATION 0      // studyroom
+//#define DEFAULT_LOCATION 3    // outdoor
 
 // TFT Pins has been set in the TFT_eSPI library in the User Setup file TTGO_T_Display.h
 // #define TFT_MOSI            19
@@ -48,6 +38,7 @@ TFT_eSPI tft = TFT_eSPI(135, 240); // Invoke custom library
 Button2 btn1(BUTTON_1);
 Button2 btn2(BUTTON_2);
 
+bool lastConnected = false;
 char buff[512];
 int vref = 1100;
 int btn1Cick = false;
@@ -58,7 +49,7 @@ char slux[16];
 char datetime[20];
 uint16_t tcolour;
 int rot = 1;
-int location_id = 0;
+int location_id = DEFAULT_LOCATION;
 unsigned long last_epoch = millis();
 const char *location;
 const char * locations[] = {
@@ -68,6 +59,15 @@ const char * locations[] = {
     "outdoor",
     "hallway"
 };
+
+EspMQTTClient client(
+    SSID_NAME,
+    SSID_PASS,
+    MQTT_HOST,  // MQTT Broker server ip
+    MQTT_USER,   // Can be omitted if not needed
+    MQTT_PASS,   // Can be omitted if not needed
+    locations[location_id]      // Client name that uniquely identify your device
+);
 
 //Uncomment will use SDCard, this is just a demonstration,
 //how to use the second SPI
@@ -214,6 +214,19 @@ void drawLogo()
     tft.setTextSize(1);
     tft.setTextColor(TFT_YELLOW);
     tft.drawString("ioStation R&D", tft.width() / 2, tft.height() / 2 + 60);
+    if (client.isConnected()) {
+        tft.setTextDatum(BL_DATUM);
+        tft.setTextColor(TFT_GREEN);
+        tft.drawString(".", 2, tft.height() - 2);
+    } else if (client.isWifiConnected()){
+        tft.setTextDatum(BL_DATUM);
+        tft.setTextColor(TFT_YELLOW);
+        tft.drawString(".", 2, tft.height() - 2);        
+    } else if (client.isMqttConnected()){
+        tft.setTextDatum(BL_DATUM);
+        tft.setTextColor(TFT_ORANGE);
+        tft.drawString(".", 2, tft.height() - 2);        
+    }
 }
 
 void drawInfo() {
@@ -358,7 +371,6 @@ void setup()
 
  //   setupSDCard();
 
-    location_id = 0;
     location = locations[location_id];
     drawLogo();
     drawInfo();
@@ -394,4 +406,9 @@ void loop()
     }
     button_loop();
     client.loop();
+    if (client.isConnected() != lastConnected) {
+        lastConnected = client.isConnected();
+        drawLogo();
+        drawInfo();
+    }
 }
