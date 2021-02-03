@@ -70,7 +70,6 @@ char slux[12];
 char datetime[20];
 char sensorname[32];
 
-#define LOCATION_ID "livingroom"
 
 EspMQTTClient client(
     SSID_NAME,
