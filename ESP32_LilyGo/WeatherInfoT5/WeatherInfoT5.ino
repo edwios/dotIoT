@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <gfxfont.h>
 #include <Adafruit_GFX.h>
+#include "Button2.h"
 
 // include library, include base class, make path known
 #include <GxEPD.h>
@@ -49,26 +50,41 @@
 #define SDCARD_MOSI 15
 #define SDCARD_MISO 2
 
-#define BUTTON_PIN 39
+#define BUTTON_1            39
+#define BUTTON_2            0
 
-//#define LOCATION_ID "livingroom"
-#define LOCATION_ID "outdoor"
+//#define DEFAULT_LOCATION 0      // studyroom
+#define DEFAULT_LOCATION 3    // outdoor
 
 
 GxIO_Class io(SPI, /*CS=5*/ ELINK_SS, /*DC=*/ ELINK_DC, /*RST=*/ ELINK_RESET);
 GxEPD_Class display(io, /*RST=*/ ELINK_RESET, /*BUSY=*/ ELINK_BUSY);
 
 SPIClass sdSPI(VSPI);
+Button2 btn1(BUTTON_1);
+Button2 btn2(BUTTON_2);
 
 
 const char *skuNum = "ioStation R&D";
 bool sdOK = false;
 int startX = 40, startY = 10;
+int btn1Cick = false;
+int btn2Cick = false;
 char stemp[8];
 char shumi[8];
 char slux[12];
 char datetime[20];
 char sensorname[32];
+int location_id = DEFAULT_LOCATION;
+unsigned long last_epoch = millis();
+const char *location;
+const char * locations[] = {
+    "studyroom",
+    "livingroom",
+    "masterbedroom",
+    "outdoor",
+    "hallway"
+};
 const char *mac = WiFi.macAddress().c_str();
 
 EspMQTTClient client(
@@ -80,6 +96,29 @@ EspMQTTClient client(
     mac      // Client name that uniquely identify your device
 );
 
+void button_init()
+{
+    btn1.setLongClickHandler([](Button2 & b) {
+        btn1Cick = false;
+    });
+    btn1.setPressedHandler([](Button2 & b) {
+        Serial.println("Button 1 clicked");
+        btn1Cick = true;
+        btn2Cick = false;
+    });
+
+    btn2.setPressedHandler([](Button2 & b) {
+        btn1Cick = false;
+        Serial.println("Button 2 clicked");
+        btn2Cick = true;
+    });
+}
+
+void button_loop()
+{
+    btn1.loop();
+    btn2.loop();
+}
 
 void updateDisplay() {
     if (strcmp(stemp, "") == 0) {
@@ -135,7 +174,7 @@ void onConnectionEstablished() {
 
         if (strncmp("environment", sensortype, 11*sizeof(char)) == 0) {
             const char *sensornm   = doc["device_name"];
-            if (strcmp(LOCATION_ID, sensornm) == 0) {
+            if (strcmp(location, sensornm) == 0) {
                 float         temp     = doc["readings"]["temperature"];
                 float         humi     = doc["readings"]["humidity"];
                 unsigned long lux      = doc["readings"]["lux"];
@@ -187,6 +226,7 @@ void setup()
     Serial.print("MAC: ");
     Serial.println(mac);
     SPI.begin(SPI_CLK, SPI_MISO, SPI_MOSI, ELINK_SS);
+    button_init();
     display.init(); // enable diagnostic output on Serial
 //    client.enableDebuggingMessages();
 
@@ -221,7 +261,8 @@ void setup()
 #endif
 
     display.update();
-
+    location = locations[location_id];
+    updateDisplay();
     Serial.println(display.width());
     Serial.println(display.height());
     // goto sleep
@@ -233,5 +274,19 @@ void setup()
 
 void loop()
 {
+    if (btn1Cick) {
+        btn1Cick = false;
+        // process button 1 click
+        location_id++;
+        if (location_id > 4) location_id = 0;
+        location = locations[location_id];
+        strcpy(sensorname, location);
+        updateDisplay();
+    }
+    if (btn2Cick) {
+        btn2Cick = false;
+        // process button 2 click
+    }
+    button_loop();
     client.loop();
 }
