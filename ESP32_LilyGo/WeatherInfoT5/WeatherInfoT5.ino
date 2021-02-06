@@ -5,6 +5,8 @@
 #include <gfxfont.h>
 #include <Adafruit_GFX.h>
 #include "Button2.h"
+#include "esp_adc_cal.h"
+#include "esp_system.h"
 
 // include library, include base class, make path known
 #include <GxEPD.h>
@@ -53,6 +55,9 @@
 #define BUTTON_1            39
 #define BUTTON_2            0
 
+#define ADC_EN              14  //ADC_EN is the ADC detection enable port
+#define ADC_PIN             35
+
 //#define DEFAULT_LOCATION 0      // studyroom
 #define DEFAULT_LOCATION 3    // outdoor
 
@@ -70,11 +75,13 @@ bool sdOK = false;
 int startX = 40, startY = 10;
 int btn1Cick = false;
 int btn2Cick = false;
+int vref = 1100;
 char stemp[8];
 char shumi[8];
 char slux[12];
 char datetime[20];
 char sensorname[32];
+char svolt[6];
 int location_id = DEFAULT_LOCATION;
 unsigned long last_epoch = millis();
 const char *location;
@@ -85,7 +92,18 @@ const char * locations[] = {
     "outdoor",
     "hallway"
 };
-const char *mac = WiFi.macAddress().c_str();
+//const char *mac = WiFi.macAddress().c_str();
+
+String getMacAddress() {
+	uint8_t baseMac[6];
+	// Get MAC address for WiFi station
+	esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
+	char baseMacChr[18] = {0};
+	sprintf(baseMacChr, "%02X%02X%02X%02X%02X%02X", baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
+	return String(baseMacChr);
+}
+
+String mac = getMacAddress();
 
 EspMQTTClient client(
     SSID_NAME,
@@ -93,7 +111,7 @@ EspMQTTClient client(
     MQTT_HOST,  // MQTT Broker server ip
     MQTT_USER,   // Can be omitted if not needed
     MQTT_PASS,   // Can be omitted if not needed
-    mac      // Client name that uniquely identify your device
+    mac.c_str()      // Client name that uniquely identify your device
 );
 
 void button_init()
@@ -120,6 +138,57 @@ void button_loop()
     btn2.loop();
 }
 
+void showVoltage()
+{
+    static uint64_t timeStamp = 0;
+    if (millis() - timeStamp > 60000 || timeStamp == 0) {
+        timeStamp = millis();
+        uint16_t v = analogRead(ADC_PIN);
+        float battery_voltage = ((float)v / 4095.0) * 2.0 * 3.3 * (vref / 1000.0);
+//        String voltage = String(battery_voltage) + "V";
+//        Serial.println(voltage);
+//        strcpy(svolt, voltage.c_str());
+        sprintf(svolt, "%0.1fV", battery_voltage);
+        display.fillRect(10, 0, 70, 12, GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+        display.setFont(&FreeMonoBold9pt7b);
+        display.setCursor(12, 10);
+        display.print(svolt);
+        display.updateWindow(10, 0, 70, 12, true);
+        showConnection(true);   // Don't know why it's gone after update...
+    }
+}
+
+void showConnection(bool forced)
+{
+    static uint64_t timeStampC = 0;
+    static uint8_t flip = 0;
+    if (millis() - timeStampC > 15000 || timeStampC == 0 || forced) {
+        timeStampC = millis();
+        if (flip) {
+            flip = 0;
+        } else {
+            flip = 1;
+        }
+        Serial.print("Flip");
+        Serial.println(flip);
+        if (flip) {
+            display.fillRect(0, 0, 10, 12, GxEPD_BLACK);
+            display.setTextColor(GxEPD_WHITE);
+        } else {
+            display.fillRect(0, 0, 10, 12, GxEPD_WHITE);
+            display.setTextColor(GxEPD_BLACK);
+        }
+        if (client.isConnected()) {
+            display.setCursor(0, 6);
+            display.setFont(&FreeSerif24pt7b);
+            display.print(".");
+        }
+        display.updateWindow(0, 0, 10, 12, true);
+    }
+}
+
+
 void updateDisplay() {
     if (strcmp(stemp, "") == 0) {
         sprintf(stemp, "%0.1fC %d%%", 99.9, int(100));
@@ -130,29 +199,28 @@ void updateDisplay() {
     if (strcmp(sensorname, "") == 0) {
         sprintf(sensorname, "%s", "No sensor");
     }
+    if (strcmp(svolt, "") == 0) {
+        sprintf(svolt, "%sV", "--");
+    }
     display.fillRect(0, 0, display.width(), display.height() - 12, GxEPD_WHITE);
     display.setTextColor(GxEPD_BLACK);
     display.setCursor(80, 10);
     display.setFont(&FreeMonoBold9pt7b);
-    display.println(sensorname);
-
+    display.print(location);
+    display.setCursor(12, 10);
+    display.print(svolt);
     display.setFont(&FreeSerif24pt7b);
     display.setCursor(5, 60);
-    display.println(stemp);
+    display.print(stemp);
     display.setCursor(display.width() / 2, 60);
-    display.println(shumi);
+    display.print(shumi);
 
     display.setFont(&FreeMonoBold9pt7b);
     display.setCursor(5, 90);
-    display.println(slux);
-
-    if (client.isConnected()) {
-        display.setCursor(2, 6);
-        display.setFont(&FreeSerif24pt7b);
-        display.println(".");
-    }
+    display.print(slux);
 
     display.updateWindow(0, 0, display.width(), display.height() - 12, true);
+    showConnection(true);
 }
 
 
@@ -223,12 +291,27 @@ void setup()
     Serial.begin(115200);
     Serial.println();
     Serial.println("setup");
-    Serial.print("MAC: ");
-    Serial.println(mac);
     SPI.begin(SPI_CLK, SPI_MISO, SPI_MOSI, ELINK_SS);
     button_init();
     display.init(); // enable diagnostic output on Serial
 //    client.enableDebuggingMessages();
+
+    Serial.println(mac);
+    
+    pinMode(ADC_EN, OUTPUT);
+    digitalWrite(ADC_EN, HIGH);
+
+    esp_adc_cal_characteristics_t adc_chars;
+    esp_adc_cal_value_t val_type = esp_adc_cal_characterize((adc_unit_t)ADC_UNIT_1, (adc_atten_t)ADC1_CHANNEL_6, (adc_bits_width_t)ADC_WIDTH_BIT_12, 1100, &adc_chars);
+    //Check type of calibration value used to characterize ADC
+    if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF) {
+        Serial.printf("eFuse Vref:%u mV", adc_chars.vref);
+        vref = adc_chars.vref;
+    } else if (val_type == ESP_ADC_CAL_VAL_EFUSE_TP) {
+        Serial.printf("Two Point --> coeff_a:%umV coeff_b:%umV\n", adc_chars.coeff_a, adc_chars.coeff_b);
+    } else {
+        Serial.println("Default Vref: 1100mV");
+    }
 
     display.setRotation(1);
     display.fillScreen(GxEPD_WHITE);
@@ -289,4 +372,6 @@ void loop()
     }
     button_loop();
     client.loop();
+    showVoltage();
+    showConnection(false);
 }
