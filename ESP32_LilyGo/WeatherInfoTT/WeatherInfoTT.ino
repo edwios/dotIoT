@@ -1,7 +1,7 @@
 #include <TFT_eSPI.h>
 //#include <User_Setups/Setup25_TTGO_T_Display.h>
 #include <SPI.h>
-#include "WiFi.h"
+#include <WiFi.h>
 #include <Wire.h>
 #include "Button2.h"
 #include "esp_adc_cal.h"
@@ -59,6 +59,7 @@ const char * locations[] = {
     "outdoor",
     "hallway"
 };
+const char *mac = WiFi.macAddress().c_str();
 
 EspMQTTClient client(
     SSID_NAME,
@@ -66,7 +67,7 @@ EspMQTTClient client(
     MQTT_HOST,  // MQTT Broker server ip
     MQTT_USER,   // Can be omitted if not needed
     MQTT_PASS,   // Can be omitted if not needed
-    locations[location_id]      // Client name that uniquely identify your device
+    mac      // Client name that uniquely identify your device
 );
 
 //Uncomment will use SDCard, this is just a demonstration,
