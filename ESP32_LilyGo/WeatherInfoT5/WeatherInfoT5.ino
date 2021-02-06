@@ -69,7 +69,7 @@ char shumi[8];
 char slux[12];
 char datetime[20];
 char sensorname[32];
-
+const char *mac = WiFi.macAddress().c_str();
 
 EspMQTTClient client(
     SSID_NAME,
@@ -77,7 +77,7 @@ EspMQTTClient client(
     MQTT_HOST,  // MQTT Broker server ip
     MQTT_USER,   // Can be omitted if not needed
     MQTT_PASS,   // Can be omitted if not needed
-    "WS04"      // Client name that uniquely identify your device
+    mac      // Client name that uniquely identify your device
 );
 
 
@@ -184,6 +184,8 @@ void setup()
     Serial.begin(115200);
     Serial.println();
     Serial.println("setup");
+    Serial.print("MAC: ");
+    Serial.println(mac);
     SPI.begin(SPI_CLK, SPI_MISO, SPI_MOSI, ELINK_SS);
     display.init(); // enable diagnostic output on Serial
 //    client.enableDebuggingMessages();
