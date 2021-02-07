@@ -61,6 +61,8 @@
 //#define DEFAULT_LOCATION 0      // studyroom
 #define DEFAULT_LOCATION 3    // outdoor
 
+// Uncomment to print debug mesages
+//#define DEBUG
 
 GxIO_Class io(SPI, /*CS=5*/ ELINK_SS, /*DC=*/ ELINK_DC, /*RST=*/ ELINK_RESET);
 GxEPD_Class display(io, /*RST=*/ ELINK_RESET, /*BUSY=*/ ELINK_BUSY);
@@ -120,14 +122,18 @@ void button_init()
         btn1Cick = false;
     });
     btn1.setPressedHandler([](Button2 & b) {
+#ifdef DEBUG
         Serial.println("Button 1 clicked");
+#endif
         btn1Cick = true;
         btn2Cick = false;
     });
 
     btn2.setPressedHandler([](Button2 & b) {
         btn1Cick = false;
+#ifdef DEBUG
         Serial.println("Button 2 clicked");
+#endif
         btn2Cick = true;
     });
 }
@@ -170,8 +176,6 @@ void showConnection(bool forced)
         } else {
             flip = 1;
         }
-        Serial.print("Flip");
-        Serial.println(flip);
         if (flip) {
             display.fillRect(0, 0, 10, 12, GxEPD_BLACK);
             display.setTextColor(GxEPD_WHITE);
@@ -226,7 +230,9 @@ void updateDisplay() {
 
 void onConnectionEstablished() {
     display.updateWindow(0, 0, display.width(), display.height(), false);
+#ifdef DEBUG
     Serial.println("MQTT connected");
+#endif
     display.fillRect(0, 0, display.width(), display.height() - 12, GxEPD_WHITE);
     display.setTextColor(GxEPD_BLACK);
     display.setCursor(2, 6);
@@ -235,14 +241,20 @@ void onConnectionEstablished() {
     display.updateWindow(0, 0, display.width(), display.height() - 12, true);
     updateDisplay();
     client.subscribe("sensornet/env/+/status", [] (const String &payload)  {
+#ifdef DEBUG
         Serial.println(payload);
+#endif
         DynamicJsonDocument doc(1024);
         deserializeJson(doc, payload);
         const char* sensortype  = doc["type"];
 
         if (strncmp("environment", sensortype, 11*sizeof(char)) == 0) {
             const char *sensornm   = doc["device_name"];
-            if (strcmp(location, sensornm) == 0) {
+#ifdef DEBUG
+            Serial.print("DEBUG: <"); Serial.print(sensornm); Serial.println(">");
+            Serial.print("DEBUG: <"); Serial.print(location); Serial.println(">");
+#endif
+            if (strncmp(location, sensornm, strlen(sensornm)) == 0) {
                 float         temp     = doc["readings"]["temperature"];
                 float         humi     = doc["readings"]["humidity"];
                 unsigned long lux      = doc["readings"]["lux"];
@@ -289,14 +301,16 @@ void wifiscan()
 void setup()
 {
     Serial.begin(115200);
+#ifdef DEBUG
     Serial.println();
-    Serial.println("setup");
+    Serial.println("Entered setup()");
+    Serial.println(mac);
+#endif
     SPI.begin(SPI_CLK, SPI_MISO, SPI_MOSI, ELINK_SS);
     button_init();
     display.init(); // enable diagnostic output on Serial
 //    client.enableDebuggingMessages();
 
-    Serial.println(mac);
     
     pinMode(ADC_EN, OUTPUT);
     digitalWrite(ADC_EN, HIGH);
@@ -305,13 +319,18 @@ void setup()
     esp_adc_cal_value_t val_type = esp_adc_cal_characterize((adc_unit_t)ADC_UNIT_1, (adc_atten_t)ADC1_CHANNEL_6, (adc_bits_width_t)ADC_WIDTH_BIT_12, 1100, &adc_chars);
     //Check type of calibration value used to characterize ADC
     if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF) {
+#ifdef DEBUG
         Serial.printf("eFuse Vref:%u mV", adc_chars.vref);
+#endif
         vref = adc_chars.vref;
     } else if (val_type == ESP_ADC_CAL_VAL_EFUSE_TP) {
         Serial.printf("Two Point --> coeff_a:%umV coeff_b:%umV\n", adc_chars.coeff_a, adc_chars.coeff_b);
     } else {
-        Serial.println("Default Vref: 1100mV");
+        Serial.print("Default Vref: 1100mV");
     }
+#ifdef DEBUG
+    Serial.println();
+#endif
 
     display.setRotation(1);
     display.fillScreen(GxEPD_WHITE);
@@ -327,27 +346,29 @@ void setup()
     } else {
         sdOK = true;
     }
-#endif
-
-    display.fillScreen(GxEPD_WHITE);
-
-    display.setCursor(10, display.height() - 2);
-    display.println(skuNum);
-
-#ifdef USE_SD
+    display.setCursor(140, display.height() - 2);
     if (sdOK) {
-        uint32_t cardSize = SD.cardSize() / (1024 * 1024);
-        display.println(String(cardSize) + "MB SD");
+        uint32_t cardSize = SD.cardSize() / (1024 * 1024 * 1024);
+        display.println(String(cardSize) + "GB SD");
     } else {
         display.println("No SD");
     }
 #endif
 
+    display.setCursor(0, display.height() - 2);
+    display.println(skuNum);
     display.update();
+
+    client.setMaxPacketSize(320);       // Set max MQTT message + overhead size
+
     location = locations[location_id];
     updateDisplay();
-    Serial.println(display.width());
+#ifdef DEBUG
+    Serial.print("Screen dimension: ");
+    Serial.print(display.width());
+    Serial.print("x");
     Serial.println(display.height());
+#endif
     // goto sleep
 //    esp_sleep_enable_ext0_wakeup((gpio_num_t)BUTTON_PIN, LOW);
 
@@ -364,6 +385,9 @@ void loop()
         if (location_id > 4) location_id = 0;
         location = locations[location_id];
         strcpy(sensorname, location);
+#ifdef DEBUG
+        Serial.print("Location changed to: <"); Serial.print(location); Serial.println(">");
+#endif
         updateDisplay();
     }
     if (btn2Cick) {
