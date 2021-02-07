@@ -30,10 +30,8 @@
 
 // FreeFonts from Adafruit_GFX
 #include <Fonts/FreeMonoBold9pt7b.h>
-#include <Fonts/FreeMonoBold12pt7b.h>
-#include <Fonts/FreeMonoBold18pt7b.h>
 #include <Fonts/FreeSerif24pt7b.h>
-
+#include <Fonts/FreeSans9pt7b.h>
 
 #include <GxIO/GxIO_SPI/GxIO_SPI.h>
 #include <GxIO/GxIO.h>
@@ -155,13 +153,21 @@ void showVoltage()
 //        Serial.println(voltage);
 //        strcpy(svolt, voltage.c_str());
         sprintf(svolt, "%0.1fV", battery_voltage);
+        int perc = int((battery_voltage - 3.0)/1.7*5.0+0.5);
         display.fillRect(10, 0, 70, 12, GxEPD_WHITE);
         display.setTextColor(GxEPD_BLACK);
-        display.setFont(&FreeMonoBold9pt7b);
+        display.setFont(&FreeSans9pt7b);
         display.setCursor(12, 10);
-        display.print(svolt);
+//        display.print(svolt);
+        display.print("[");
+        for (int i = 0; i < 5; i++) {
+            if (i < perc)
+                display.print("/");
+            else
+                display.print(" ");
+        }
+        display.print("]");
         display.updateWindow(10, 0, 70, 12, true);
-        showConnection(true);   // Don't know why it's gone after update...
     }
 }
 
@@ -211,8 +217,8 @@ void updateDisplay() {
     display.setCursor(80, 10);
     display.setFont(&FreeMonoBold9pt7b);
     display.print(location);
-    display.setCursor(12, 10);
-    display.print(svolt);
+//    display.setCursor(12, 10);
+//    display.print(svolt);
     display.setFont(&FreeSerif24pt7b);
     display.setCursor(5, 60);
     display.print(stemp);
@@ -225,20 +231,23 @@ void updateDisplay() {
 
     display.updateWindow(0, 0, display.width(), display.height() - 12, true);
     showConnection(true);
+    showVoltage();
 }
 
 
 void onConnectionEstablished() {
-    display.updateWindow(0, 0, display.width(), display.height(), false);
+    display.updateWindow(0, 0, display.width(), display.height(), true);
 #ifdef DEBUG
     Serial.println("MQTT connected");
 #endif
-    display.fillRect(0, 0, display.width(), display.height() - 12, GxEPD_WHITE);
+/*
+     display.fillRect(0, 0, display.width(), display.height() - 12, GxEPD_WHITE);
     display.setTextColor(GxEPD_BLACK);
     display.setCursor(2, 6);
     display.setFont(&FreeSerif24pt7b);
     display.println(".");
     display.updateWindow(0, 0, display.width(), display.height() - 12, true);
+ */
     updateDisplay();
     client.subscribe("sensornet/env/+/status", [] (const String &payload)  {
 #ifdef DEBUG
