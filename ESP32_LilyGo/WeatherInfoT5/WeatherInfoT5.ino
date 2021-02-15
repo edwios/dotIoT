@@ -153,7 +153,8 @@ void showVoltage()
 //        Serial.println(voltage);
 //        strcpy(svolt, voltage.c_str());
         sprintf(svolt, "%0.1fV", battery_voltage);
-        int perc = int((battery_voltage - 3.0)/1.7*5.0+0.5);
+        int perc = int((battery_voltage - 3.0)/1.4*5.0+0.5);
+        if (perc > 5) perc = 5;
         display.fillRect(10, 0, 70, 12, GxEPD_WHITE);
         display.setTextColor(GxEPD_BLACK);
         display.setFont(&FreeSans9pt7b);
