@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 import secrets
 import deviceconfig
 
-DEBUG = False
+DEBUG = True
 
 MQTT_PUB_TOPIC_STATUS = 'sensornet/env/{:s}/status'
 MQTT_USER = secrets.MQTT_USER
@@ -25,69 +25,95 @@ m_devicemapping = deviceconfig.devices
 
 
 def readenv(mac_address, client, iface):
+    global DEBUG
     err = False
     dt = time.strftime('%F %H:%M:%S')
-    if DEBUG: print("Connecting...")
+    if DEBUG:
+        dt = time.strftime('%F %H:%M:%S')
+        print("[%s] Connecting..." % dt)
     try:
         nano_sense = btle.Peripheral(mac_address, addrType=btle.ADDR_TYPE_RANDOM, iface=iface)
     except:
-        if DEBUG: print("Connection failed")
+        if DEBUG:
+            dt = time.strftime('%F %H:%M:%S')
+            print("[%s] Connection failed" % dt)
         err = True
     if err:
         return
-    if DEBUG: print("Discovering Services...")
+    if DEBUG: print("[%s] Discovering Services..." % dt)
     try:
         _ = nano_sense.services
         environmental_sensing_service = nano_sense.getServiceByUUID("181A")
     except:
-        print("ERROR: Device %s provides no such service" % mac_address)
+        dt = time.strftime('%F %H:%M:%S')
+        print("[%s] ERROR: Device %s provides no such service" % (dt, mac_address))
         try:
             nano_sense.disconnect()
         except:
             pass
         return
-    if DEBUG: print("Discovering Characteristics...")
+    if DEBUG:
+        dt = time.strftime('%F %H:%M:%S')
+        print("[%s] Discovering Characteristics..." % dt)
     try:
         ac = environmental_sensing_service.getCharacteristics()
     except:
-        print("ERROR: Device %s provides no characteristic!" % mac_address)
+        dt = time.strftime('%F %H:%M:%S')
+        print("[%s] ERROR: Device %s provides no characteristic!" % (dt, mac_address))
         try:
             nano_sense.disconnect()
         except:
             pass
         return
     if ac.count == 0:
-        print("ERROR: Device %s provides no characteristic!" % mac_address)
+        dt = time.strftime('%F %H:%M:%S')
+        print("[%s] ERROR: Device %s provides no characteristic!" % (dt, mac_address))
         try:
             nano_sense.disconnect()
         except:
             pass
         return
+    supports_temp = False
+    supports_pressure = False
+    supports_humidity = False
+    supports_lux = False
+    for chara in ac:
+        x = chara.uuid.getCommonName()
+        if x == 'Temperature':
+            supports_temp = True
+        elif x == 'Pressure':
+            supports_pressure = True
+        elif x == 'Humidity':
+            supports_humidity = True
+        elif x == 'Irradiance':
+            supports_lux = True
     count = 5
     st = 1
-    while (st != 0) and (count > 0):     
+    while (st != 0) and (count > 0) and supports_temp:     
         st, t = read_temperature(environmental_sensing_service)
         time.sleep(2)
         count = count - 1
     count = 5
     sh = 1
-    while (sh != 0) and (count > 0):     
+    while (sh != 0) and (count > 0) and supports_humidity:     
         sh, h = read_humidity(environmental_sensing_service)
         time.sleep(2)
         count = count - 1
     count = 5
     sp = 1
-    while (sp != 0) and (count > 0):     
+    while (sp != 0) and (count > 0) and supports_pressure:     
         sp, p = read_pressure(environmental_sensing_service)
         time.sleep(2)
         count = count - 1
     count = 5
     sl = 1
-    while (sl != 0) and (count > 0):
+    while (sl != 0) and (count > 0) and supports_lux:
         sl, l = read_lux(environmental_sensing_service)
         time.sleep(2)
         count = count - 1
-    if DEBUG: print("Disconnecting...")
+    if DEBUG:
+        dt = time.strftime('%F %H:%M:%S')
+        print("[%s] Disconnecting..." % dt)
     try:
         nano_sense.disconnect()
     except:
@@ -96,19 +122,22 @@ def readenv(mac_address, client, iface):
     if (st == 0):
         res['temperature'] = t
     else:
-        print("ERROR: Cannot read temperature from evice %s!" % mac_address)
+        dt = time.strftime('%F %H:%M:%S')
+        print("[%s] ERROR: Cannot read temperature from evice %s!" % (dt, mac_address))
     if (sh == 0):
         res['humidity'] = h
     else:
-        print("ERROR: Cannot read humidity from evice %s!" % mac_address)
+        print("[%s] ERROR: Cannot read humidity from evice %s!" % (dt, mac_address))
     if (sp == 0):
         res['pressure'] = p
     else:
-        print("ERROR: Cannot read pressure from evice %s!" % mac_address)
+        dt = time.strftime('%F %H:%M:%S')
+        print("[%s] ERROR: Cannot read pressure from evice %s!" % (dt, mac_address))
     if (sl == 0):
         res['lux'] = l
     else:
-        print("ERROR: Cannot read lux from evice %s!" % mac_address)
+        dt = time.strftime('%F %H:%M:%S')
+        print("[%s] ERROR: Cannot read lux from evice %s!" % (dt, mac_address))
     try:
         devicename = m_devicemapping[mac_address]
     except:
@@ -116,9 +145,11 @@ def readenv(mac_address, client, iface):
     mesg = {"device_mac": mac_address, "type":"environment", "datetime": dt, "device_name":devicename}
     mesg['readings'] = res
     mesg['state'] = 'ON'
-    mesg['epoch'] = int(time.clock_gettime(0))
+#    mesg['epoch'] = int(time.clock_gettime(0))
     jstr = json.dumps(mesg)
-    if DEBUG: print(jstr)
+    if DEBUG:
+        dt = time.strftime('%F %H:%M:%S')
+        print(jstr)
     mtopic = MQTT_PUB_TOPIC_STATUS.format(devicename)
     if client:
         client.publish(mtopic, jstr)
@@ -239,7 +270,7 @@ def get_args():
     arg_parser.add_argument("-t", "--interval", help="Data collection interval", default=900)
     arg_parser.add_argument("-i", "--interface", help="BLE interface", default=0)
     arg_parser.add_argument("-m", "--mac", help="MAC address of device to connect", default=None)
-    arg_parser.add_argument("-d", "--debug", help="Debug", default=False)
+    arg_parser.add_argument("-d", "--debug", help="Debug", action='store_true')
     arg_parser.add_argument("-H", "--mqtt", help="MQTT broker address ", default="10.0.1.250")
     args = arg_parser.parse_args()
     return args
