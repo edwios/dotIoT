@@ -115,6 +115,7 @@ def do_connect(ssid, pwd):
             WiFi_connected = True
         if WiFi_connected and DEBUG: print('Wi-Fi connected, network config:', sta_if.ifconfig())
         return WiFi_connected
+    return True
 
 
 def on_message(topic, msg):
@@ -1417,16 +1418,21 @@ while True:
             # # if DEBUG: print("MQTT broker not reachable")
             m_client = None
     if m_client is None:
-        try:
-            m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
-        except:
-            m_client = None
-        if not initMQTT():
-            mqtt_error(1)
+        m_WiFi_connected = do_connect(SSID, PASS)
+        if not m_WiFi_connected:
+            wifi_error(1)
+            print("ERROR: Cannot connect back to Wi-Fi")
         else:
-            print_progress("MQTT OK")
-            m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
-            mqtt_error(0)
+            try:
+                m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
+            except:
+                m_client = None
+            if not initMQTT():
+                mqtt_error(1)
+            else:
+                print_progress("MQTT OK")
+                m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
+                mqtt_error(0)
     check_callbacks()
     check_reset()
 
