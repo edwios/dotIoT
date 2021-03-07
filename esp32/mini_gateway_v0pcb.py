@@ -140,7 +140,11 @@ def initMQTT():
         print("ERROR: No MQTT connection to init for")
         return False
     m_client.set_callback(on_message)  # Specify on_message callback
-    m_client.connect()   # Connect to MQTT broker
+    try:
+        m_client.connect()   # Connect to MQTT broker
+    except:
+        print("ERROR: Cannot reach MQTT broker!")
+        return False
 #    m_client.subscribe(MQTT_SUB_TOPIC_ALL)
     m_client.subscribe(MQTT_SUB_TOPIC_CMD)
     m_client.subscribe(MQTT_PUB_TOPIC_STATUS)
@@ -1418,6 +1422,7 @@ while True:
             # # if DEBUG: print("MQTT broker not reachable")
             m_client = None
     if m_client is None:
+        time.sleep(5)   # Sth wrong! Wait 5s before we attempt anything
         m_WiFi_connected = do_connect(SSID, PASS)
         if not m_WiFi_connected:
             wifi_error(1)
@@ -1427,6 +1432,7 @@ while True:
                 m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
             except:
                 m_client = None
+            time.sleep(5)   # Wait 5s to make sure the damn network is ready
             if not initMQTT():
                 mqtt_error(1)
             else:
