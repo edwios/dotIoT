@@ -57,6 +57,9 @@
 #define ADC_EN              14  //ADC_EN is the ADC detection enable port
 #define ADC_PIN             35
 
+#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  600        /* Time ESP32 will go to sleep (in seconds) */
+
 //#define DEFAULT_LOCATION 0      // studyroom
 #define DEFAULT_LOCATION 3    // outdoor
 
@@ -75,17 +78,21 @@ Button2 btn2(BUTTON_2);
 const char *skuNum = "ioStation R&D";
 bool sdOK = false;
 bool dirty = false;
+RTC_DATA_ATTR bool deepSleep = false;
 int startX = 40, startY = 10;
 int btn1Cick = false;
+int btn1LongCick = false;
 int btn2Cick = false;
 int vref = 1100;
+int sleeptime = TIME_TO_SLEEP;
+uint64_t timeStampC = 0;
 char stemp[8];
 char shumi[8];
 char slux[12];
 char datetime[20];
 char sensorname[32];
 char svolt[6];
-int location_id = DEFAULT_LOCATION;
+RTC_DATA_ATTR int location_id;
 unsigned long last_epoch = millis();
 const char *location;
 const char * locations[] = {
@@ -108,7 +115,7 @@ String getMacAddress() {
 
 String mac = getMacAddress();
 
-static DynamicJsonDocument last_doc(2048);
+RTC_DATA_ATTR static DynamicJsonDocument last_doc(2048);
 
 EspMQTTClient client(
     SSID_NAME,
@@ -123,17 +130,20 @@ void button_init()
 {
     btn1.setLongClickHandler([](Button2 & b) {
         btn1Cick = false;
+        btn1LongCick = true;
     });
-    btn1.setPressedHandler([](Button2 & b) {
+    btn1.setClickHandler([](Button2 & b) {
 #ifdef DEBUG
         Serial.println("Button 1 clicked");
 #endif
         btn1Cick = true;
+        btn1LongCick = false;
         btn2Cick = false;
     });
 
     btn2.setPressedHandler([](Button2 & b) {
         btn1Cick = false;
+        btn1LongCick = false;
 #ifdef DEBUG
         Serial.println("Button 2 clicked");
 #endif
@@ -151,6 +161,16 @@ void showSkuNum()
 {
     display.setCursor(10, display.height() - 4);
     display.print(skuNum);
+}
+
+void showSleep()
+{
+    display.setCursor(180, display.height() - 4);
+    if (deepSleep) {
+        display.print("Sleep");
+    } else {
+        display.print("Normal");
+    }
 }
 
 void showVoltage()
@@ -181,6 +201,8 @@ void showVoltage()
         }
         display.setCursor(42, 20);
         display.print("]");
+        sleeptime = (5 - perc) * 150 + TIME_TO_SLEEP;
+        esp_sleep_enable_timer_wakeup(sleeptime * uS_TO_S_FACTOR);
 //    }
 }
 
@@ -249,6 +271,7 @@ void updateDisplay() {
     showConnection(false);
     showVoltage();
     showSkuNum();
+    showSleep();
     display.display(false);
 //    showConnection(true);
 //    showVoltage();
@@ -361,6 +384,8 @@ void setup()
     pinMode(ADC_EN, OUTPUT);
     digitalWrite(ADC_EN, HIGH);
 
+    esp_sleep_enable_timer_wakeup(sleeptime * uS_TO_S_FACTOR);
+
     esp_adc_cal_characteristics_t adc_chars;
     esp_adc_cal_value_t val_type = esp_adc_cal_characterize((adc_unit_t)ADC_UNIT_1, (adc_atten_t)ADC1_CHANNEL_6, (adc_bits_width_t)ADC_WIDTH_BIT_12, 1100, &adc_chars);
     //Check type of calibration value used to characterize ADC
@@ -408,7 +433,7 @@ void setup()
     client.setMaxPacketSize(320);       // Set max MQTT message + overhead size
 
     location = locations[location_id];
-    updateDisplay();
+    dirty=true;
 #ifdef DEBUG
     Serial.print("Screen dimension: ");
     Serial.print(display.width());
@@ -417,14 +442,15 @@ void setup()
 #endif
     // goto sleep
 //    esp_sleep_enable_ext0_wakeup((gpio_num_t)BUTTON_PIN, LOW);
-
 //    esp_deep_sleep_start();
+    timeStampC = millis();
+
 }
 
 
 void loop()
 {
-    if (btn1Cick) {
+    if (btn1Cick && !btn1LongCick) {
         btn1Cick = false;
         // process button 1 click
         location_id++;
@@ -435,17 +461,32 @@ void loop()
         Serial.print("Location changed to: <"); Serial.print(location); Serial.println(">");
 #endif
         onConnectionEstablished();
-        if (dirty) {
-            dirty = false;
-            updateDisplay();
-        }
     }
     if (btn2Cick) {
         btn2Cick = false;
         // process button 2 click
     }
+    if (btn1LongCick) {
+        btn1LongCick = false;
+#ifdef DEBUG
+        Serial.println("Setting deep sleep mode");
+#endif
+        deepSleep = !deepSleep;
+        timeStampC = millis();
+        dirty = true;
+    }
     button_loop();
     client.loop();
-//    showVoltage();
-//    showConnection(false);
+    if (dirty) {
+        dirty = false;
+        updateDisplay();
+    }
+    if (deepSleep) {
+        if (millis() - timeStampC > 60000) {
+#ifdef DEBUG
+            Serial.println("Entering deep sleep mode");
+#endif
+            esp_deep_sleep_start();
+        }
+    }
 }
