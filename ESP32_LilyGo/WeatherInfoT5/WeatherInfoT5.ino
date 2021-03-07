@@ -74,6 +74,7 @@ Button2 btn2(BUTTON_2);
 
 const char *skuNum = "ioStation R&D";
 bool sdOK = false;
+bool dirty = false;
 int startX = 40, startY = 10;
 int btn1Cick = false;
 int btn2Cick = false;
@@ -106,6 +107,8 @@ String getMacAddress() {
 }
 
 String mac = getMacAddress();
+
+static DynamicJsonDocument last_doc(2048);
 
 EspMQTTClient client(
     SSID_NAME,
@@ -264,8 +267,24 @@ void onConnectionEstablished() {
     display.setFont(&FreeSerif24pt7b);
     display.println(".");
     display.setPartialWindow(0, 0, display.width(), display.height() - 12);
- */
     updateDisplay();
+*/
+
+    if (location) {
+        // Fill in last remembered data
+        if (last_doc[location]) {
+            float         temp     = last_doc[location]["readings"]["temperature"];
+            float         humi     = last_doc[location]["readings"]["humidity"];
+            unsigned long lux      = last_doc[location]["readings"]["lux"];
+            const char   *dt       = last_doc[location]["datetime"];
+            sprintf(stemp, "%0.1fC", temp);
+            sprintf(shumi, "%d%%", int(humi));
+            sprintf(slux, "%d lm", lux);
+            strcpy(sensorname, location);
+            strcpy(datetime, dt);
+            dirty = true;
+        }
+    }
     client.subscribe("sensornet/env/+/status", [] (const String &payload)  {
 #ifdef DEBUG
         Serial.println(payload);
@@ -281,6 +300,7 @@ void onConnectionEstablished() {
             Serial.print("DEBUG: <"); Serial.print(location); Serial.println(">");
 #endif
             if (strncmp(location, sensornm, strlen(sensornm)) == 0) {
+                last_doc[sensornm] = doc;
                 float         temp     = doc["readings"]["temperature"];
                 float         humi     = doc["readings"]["humidity"];
                 unsigned long lux      = doc["readings"]["lux"];
@@ -290,10 +310,10 @@ void onConnectionEstablished() {
                 sprintf(slux, "%d lm", lux);
                 strcpy(sensorname, sensornm);
                 strcpy(datetime, dt);
-                updateDisplay();
+                dirty = true;
             }
         }
-  });
+    });
 
 //  client.publish("mytopic/test", "This is a message");
 }
@@ -414,7 +434,11 @@ void loop()
 #ifdef DEBUG
         Serial.print("Location changed to: <"); Serial.print(location); Serial.println(">");
 #endif
-        updateDisplay();
+        onConnectionEstablished();
+        if (dirty) {
+            dirty = false;
+            updateDisplay();
+        }
     }
     if (btn2Cick) {
         btn2Cick = false;
