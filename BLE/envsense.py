@@ -152,7 +152,7 @@ def readenv(mac_address, client, iface):
         print(jstr)
     mtopic = MQTT_PUB_TOPIC_STATUS.format(devicename)
     if client:
-        client.publish(mtopic, jstr)
+        client.publish(mtopic, jstr, retain=True)
 
 
 def byte_array_to_int(value):
