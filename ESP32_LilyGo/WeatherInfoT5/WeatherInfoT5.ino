@@ -250,8 +250,10 @@ void updateDisplay() {
         sprintf(svolt, "%sV", "--");
     }
 //    display.setPartialWindow(0, 0, display.width(), display.height() - 16);
+    display.setRotation(1);
     display.setFullWindow();
-    display.fillRect(0, 0, display.width(), display.height(), GxEPD_WHITE);
+//    display.fillRect(0, 0, display.width(), display.height(), GxEPD_WHITE);
+    display.fillScreen(GxEPD_WHITE);
     display.setTextColor(GxEPD_BLACK);
     display.setCursor(80, 16);
     display.setFont(&FreeMonoBold9pt7b);
@@ -377,6 +379,7 @@ void setup()
     Serial.println(mac);
 #endif
 //    SPI.begin(SPI_CLK, SPI_MISO, SPI_MOSI, ELINK_SS);
+    client.setMaxPacketSize(320);       // Set max MQTT message + overhead size
     button_init();
     display.init(); // enable diagnostic output on Serial
 //    client.enableDebuggingMessages();
@@ -403,13 +406,14 @@ void setup()
     Serial.println();
 #endif
 
+/*
     display.setFullWindow();
     display.setRotation(1);
     display.fillScreen(GxEPD_WHITE);
     display.setTextColor(GxEPD_BLACK);
     display.setFont(&FreeMonoBold9pt7b);
     display.setCursor(0, 0);
-
+*/
 #ifdef USE_SD
     sdSPI.begin(SDCARD_CLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_SS);
 
@@ -426,11 +430,6 @@ void setup()
         display.println("No SD");
     }
 #endif
-
-    showSkuNum();
-    display.display(false);
-
-    client.setMaxPacketSize(320);       // Set max MQTT message + overhead size
 
     location = locations[location_id];
     dirty=true;
