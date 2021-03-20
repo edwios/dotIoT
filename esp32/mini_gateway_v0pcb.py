@@ -18,7 +18,7 @@ import json
 #esp.osdebug(None)
 #import gc
 #gc.collect()
-
+from micropython import const
 
 DEFAULT_MESHNAME = secrets.DEFAULT_MESHNAME
 DEFAULT_MESHPWD = secrets.DEFAULT_MESHPWD
@@ -56,7 +56,7 @@ NLED = config.N_LED
 ON_DATA = [1, 1, 0]
 OFF_DATA = [0, 1, 0]
 
-WAIT_TIME = 5
+WAIT_TIME = const(5)
 
 m_WiFi_connected = False
 led = []
@@ -70,17 +70,17 @@ m_cbreplies = []
 Meshname = DEFAULT_MESHNAME
 Meshpass = DEFAULT_MESHPWD
 
-WIFI_ERROR_FLAG = 1
-BT_ERROR_FLAG = 2
-MQTT_ERROR_FLAG = 4
-BTMOD_ERROR_FLAG = 8
-ALT_CONFIG = 16
-WIFI_CONNECTING = 32
-MQTT_CONNECTING = 64
-MESH_CONNECTING = 128
-STATUS_TO_MESH = 256
-STATUS_FROM_MESH = 512
-EXIT_FLAG = 0x7F
+WIFI_ERROR_FLAG = const(1)
+BT_ERROR_FLAG = const(2)
+MQTT_ERROR_FLAG = const(4)
+BTMOD_ERROR_FLAG = const(8)
+ALT_CONFIG = const(16)
+WIFI_CONNECTING = const(32)
+MQTT_CONNECTING = const(64)
+MESH_CONNECTING = const(128)
+STATUS_TO_MESH = const(256)
+STATUS_FROM_MESH = const(512)
+EXIT_FLAG = const(0x7F)
 #WIFI_ERROR_SYMB = "Wi-Fi"
 #BT_ERROR_SYMB = "MESH"
 #MQTT_ERROR_SYMB = "MQTT"
@@ -91,6 +91,7 @@ EXIT_FLAG = 0x7F
 
 m_rdevstatuses = ["disabled", "enabled"]
 m_rastrooffsets = ["before", "after"]
+m_rastrooffsets1 = ["-", "+"]
 m_rdevactions = ["off", "on", "scene"]
 m_ralarmtypes = ["day", "week"]
 
@@ -150,6 +151,7 @@ def initMQTT():
     m_client.subscribe(MQTT_PUB_TOPIC_STATUS)
     m_client.subscribe(MQTT_SUB_TOPIC_CONF)
     m_client.subscribe(MQTT_SUB_TOPIC_HASS_SET)
+    m_client.publish(MQTT_PUB_TOPIC_STATUS, "Ready")
     return True
 
 
@@ -166,8 +168,7 @@ def _send_command(cmd: str = 'AT'):
 
 def send_command(cmd: str = None):
     """Send AT command without AT+ prefix"""
-    command = 'AT+' + cmd
-    _send_command(command)
+    _send_command('AT+{:s}'.format(cmd))
 
 
 def checkBLEModule():
@@ -190,11 +191,11 @@ def resetBLEModule():
 
 def _setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
     """Internal method to set the mesh parameters to the BLE module. """
-    send_command('MESHNAME=' + name)
+    send_command('MESHNAME={:s}'.format(name))
     if not expect_reply('OK'):
         print("ERROR in setting Mesh Name")
         return False
-    send_command('MESHPWD=' + pwd)
+    send_command('MESHPWD={:s}'.format(pwd))
     if not expect_reply('OK'):
         print("ERROR in setting Mesh Password")
         return False
@@ -458,7 +459,11 @@ def check_callbacks():
             except:
                 devaddrstr = None
             if devaddrstr is not None:
-                # if DEBUG: print("DEBUG: Got call back from %s" % devaddrstr)
+                try:
+                    length = int(lengthstr)
+                except:
+                    length = 0
+                if DEBUG: print("DEBUG: Got call back from %s with %s" % (devaddrstr, callback[:length*2]))
                 print_status(STATUS_FROM_MESH)
                 try:
                     t = ubinascii.unhexlify(devaddrstr)
@@ -466,19 +471,16 @@ def check_callbacks():
                     devaddr = -1
                 else:
                     devaddr = t[0] * 256 + t[1]
-                try:
-                    length = int(lengthstr)
-                except:
-                    length = 0
                 if (len(callback) != length * 2) or (length == 0) or (devaddr == -1):
                     print("ERROR: Corrupted callback packet found")
-#                    process_callback(devaddr, callback)
                 else:
                     process_callback(devaddr, callback)
 
 
 def process_callback(devaddr, callback):
-    global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG
+    global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG, s1, s2
+    gc.collect()
+    mesg = ""
     # if DEBUG: print("Processing call back from %04x" % devaddr)
     name = rev_lookup_device(devaddr)
     if (name is None) or (callback is None):
@@ -514,6 +516,20 @@ def process_callback(devaddr, callback):
         if cct is not None:
             mesg['cct'] = cct
         update_hass(name, state, bgt, cct)
+    if opcode == 0xDB:
+        # User_all notify report
+        # +DATA:DB1102006464FF
+        bgt = data[5]
+        state = None
+        mesg = {"device_name":name}
+        if bgt is not None:
+            if bgt > 0:
+                state = 'on'
+            else:
+                state = 'off'
+            mesg['state'] = state
+            mesg['brightness'] = bgt
+        update_hass(name, state, bgt, None)
     elif opcode == 0xE7:
         # +DATA:0001,23,E71102A50192097F170A0000
         cbs = data[3]
@@ -555,7 +571,7 @@ def process_callback(devaddr, callback):
         year = data[3] + (data[4] << 8)
         month = data[5]
         day = data[6]
-        date_str = '{:d}-{:d}-{:d}'.format(year, month, day)
+        date_str = '{:d}-{:02d}-{:02d}'.format(year, month, day)
         hr = data[7]
         mi = data[8]
         sc = data[9]
@@ -612,7 +628,7 @@ def process_callback(devaddr, callback):
             # Get DST
             summer_start_month = data[5]
             summer_start_day = data[6]
-            summer_start_str = '{:d}/{:d}'.format(summer_start_day, summer_start_month)
+            summer_start_str = '{:02d}/{:02d}'.format(summer_start_day, summer_start_month)
             if (data[7] == 0):
                 summer_comp = -1
             else:
@@ -620,7 +636,7 @@ def process_callback(devaddr, callback):
             summer_offset = summer_comp * data[8]
             winter_start_month = data[9]
             winter_start_day = data[10]
-            winter_start_str = '{:d}/{:d}'.format(winter_start_day, winter_start_month)
+            winter_start_str = '{:02d}/{:02d}'.format(winter_start_day, winter_start_month)
             if (data[11] == 0):
                 winter_comp = -1
             else:
@@ -649,27 +665,31 @@ def process_callback(devaddr, callback):
         # if DEBUG: print("Unsupported call back opcode %02X" % opcode)
         return
     update_status_mqtt(mesg)
+    gc.collect()
 
 
 def update_hass(name, state, brightness, cct):
     global DEBUG, m_client, MQTT_PUB_TOPIC_HASS_PREFIX
     # if DEBUG: print("update_hass(): Pub status for %s" % (name))
-    hass_state_topic = MQTT_PUB_TOPIC_HASS_PREFIX + name
-    hass_mesg = '"device_name":"{:s}"'.format(name)
+    hass_state_topic = '{:s}{:s}'.format(MQTT_PUB_TOPIC_HASS_PREFIX, name)
+    hass_mesg = {}
+    hass_mesg['device_name'] = name
     if state is not None:
-        hass_mesg = hass_mesg + ',"state":"{:s}"'.format(state.upper())
+        hass_mesg['state'] = state.upper()
     if brightness is not None:
-        hass_mesg = hass_mesg + ',"brightness":{:d}'.format(brightness)
+        hass_mesg['brightness'] = brightness
     if cct is not None:
         hasscct = cct
         if cct <= 100:
             cct = 100 - cct
             hasscct = int(cct * 347 / 100 + 153)
-        hass_mesg = hass_mesg + ',"color_temp":{:d}'.format(hasscct)
-    hass_mesg = '{' + hass_mesg + '}'
-    # if DEBUG: print("update_hass(): Pub mesg: %s" % hass_mesg)
-    if m_client:
-        m_client.publish(hass_state_topic, hass_mesg.encode('utf-8'))
+        hass_mesg['color_temp'] = hasscct
+    try:
+        if m_client:
+            m_client.publish(hass_state_topic, json.dumps(hass_mesg).encode('utf-8'))
+    except:
+        print("ERROR: update_hass(hass_mesg) has invalid content")
+        return
 
 
 def update_status_mqtt(mesg):
@@ -708,9 +728,11 @@ def process_command(mqttcmd):
     if mqttcmd is not '':
         if '/' not in mqttcmd:
             if (mqttcmd == "debug"):
+                print("Info: Debug on")
                 DEBUG = True
                 return
             elif (mqttcmd == "nodebug"):
+                print("Info: Debug off")
                 DEBUG = False
                 return
             elif (mqttcmd == "refresh"):
@@ -822,14 +844,16 @@ def process_command(mqttcmd):
                         cmd(did, 0xc0, [0x10] + list(data))
                         _expectedCallBack = [0xc1, 0x00]
             elif (hcmd == "set_time"):
+                if (hexdata == '' or hexdata == 'now'):
+                    (yyyy,mo,dd,hh,mm,ss,_,_) = time.localtime()
                 if (hexdata != ''):
                     # Parse date time string yyyy,mo,dd,hh,mm,ss
                     try:
                         (yyyy,mo,dd,hh,mm,ss) = hexdata.split(',')
                     except:
                         print("ERROR: invalid parameters, yyyy,mo,dd,hh,mm,ss")
-                    else:
-                        settimeStr(did, yyyy,mo,dd,hh,mm,ss)
+                        return
+                settimeStr(did, yyyy,mo,dd,hh,mm,ss)
             elif (hcmd == "set_dst"):
                 if (hexdata != ''):
                     # Parse DST string Bmm,Bdd,Emm,Edd,Offset,Enabled
@@ -1050,7 +1074,7 @@ def process_hass(topic, msg):
                     else:
                         data = i.to_bytes(3, 'big')
                         cmd(did, 0xe2, [0x04] + list(data))
-            hassct = None
+            hassct = 0
             if cct is not None:
                 ct = 100 - ct
                 hassct = int(ct * 347 / 100 + 153)
@@ -1142,7 +1166,7 @@ def blemodu_error(e):
 
 def exit_mode():
     """Exit willingly"""
-    global m_WiFi_connected
+    global m_WiFi_connected, SSID, PASS
     m_WiFi_connected = do_connect(SSID, PASS) # If we want webrepl afterwards
     print_status(EXIT_FLAG)
     time.sleep(3)
