@@ -10,12 +10,12 @@ MQTT_TOPIC = 'sensornet/#'
 MQTT_TOPIC_PREFIX = 'sensornet/' + MQTT_CLIENT_ID + '/'
 
 # Board light defs
-LED1 = Pin(33)
-LED2 = Pin(32)
-LED3 = Pin(25)
-LED4 = Pin(21)
-LED5 = Pin(23)
-LED6 = Pin(22)
+LED4 = Pin(33)
+LED1 = Pin(32)
+LED5 = Pin(25)
+LED2 = Pin(21)
+LED6 = Pin(23)
+LED3 = Pin(22)
 KEY1 = Pin(35)
 
 N_LED = 6
