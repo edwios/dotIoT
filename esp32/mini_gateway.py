@@ -892,6 +892,12 @@ def process_command(mqttcmd):
                             p = 0
                         pars.append(p)
                     cmd(did, c, pars)
+            elif (hcmd == 'at'):
+                if hexdata != '':
+                    c = hexdata.upper()
+                    send_command(c)
+                    r = getReply()
+                    print('AT command returned: {:s}'.format(r))
 
 
 def isDst(day, month, dow):
