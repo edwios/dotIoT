@@ -569,7 +569,7 @@ def process_callback(devaddr, callback):
                 week = 'smtwtfs'
                 weekstr = ''
                 for i in range(7):
-                    if alrm_dayomStr[i] == '1':
+                    if alrm_dayomStr[6-i] == '1':
                         weekstr = weekstr + week[i].upper()
                     else:
                         weekstr = weekstr + week[i]
