@@ -14,6 +14,7 @@ import os
 import ubinascii
 import sys
 import json
+import ntptime
 #import esp
 #esp.osdebug(None)
 #import gc
@@ -197,11 +198,11 @@ def _setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
     """Internal method to set the mesh parameters to the BLE module. """
     send_command('MESHNAME={:s}'.format(name))
     if not expect_reply('OK'):
-        print("ERROR in setting Mesh Name")
+#        print("ERROR in setting Mesh Name")
         return False
     send_command('MESHPWD={:s}'.format(pwd))
     if not expect_reply('OK'):
-        print("ERROR in setting Mesh Password")
+#        print("ERROR in setting Mesh Password")
         return False
     return True
 
@@ -214,6 +215,7 @@ def setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
         time.sleep(0.5)
         trials = trials + 1
     if trials >= 4:
+        print("ERROR in setting Mesh params")
         return False
     trials = 0
     while (not resetBLEModule()) and (trials < 4):
@@ -520,7 +522,7 @@ def process_callback(devaddr, callback):
         if cct is not None:
             mesg['cct'] = cct
         update_hass(name, state, bgt, cct)
-    if opcode == 0xDB:
+    elif opcode == 0xDB:
         # User_all notify report
         # +DATA:DB1102006464FF
         bgt = data[5]
@@ -570,7 +572,7 @@ def process_callback(devaddr, callback):
             timeStr = '{:02d}:{:02d}:{:02d}'.format(alrm_hour, alrm_min, alrm_sec)
             #if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
             mesg = {"device_name":name, "device_id":devaddr, "type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr, "alarm_days":alrm_dayomStr}
-    elif opcode == 0xE9:
+    elif opcode == 0xE9 or opcode == 0xE4:
         # Time get
         year = data[3] + (data[4] << 8)
         month = data[5]
@@ -580,7 +582,11 @@ def process_callback(devaddr, callback):
         mi = data[8]
         sc = data[9]
         time_str = '{:02d}:{:02d}:{:02d}'.format(hr, mi, sc)
-        mesg = {"device_name":name, "device_id":devaddr, "type":"time", "time":time_str, "date":date_str}
+        mesg = {"device_name":name, "device_id":devaddr, "time":time_str, "date":date_str}
+        if opcode == 0xE9:
+            mesg['type'] = 'get_time'
+        else:
+            mesg['type'] = 'set_time'
     elif opcode == 0xEB:
         # Astro timers
         cbs = data[4]       # data[3] is fixed to 0x01
@@ -622,7 +628,6 @@ def process_callback(devaddr, callback):
                 # offset_mStr = '{:02d} min'.format(offset_m)
                 timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
                 offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
-                if DEBUG: print("INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (name, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
                 mesg = {"device_name":name, "device_id":devaddr, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
             else:
                 mesg['deviceName'] = name
@@ -668,6 +673,7 @@ def process_callback(devaddr, callback):
     else:
         if DEBUG: print("Unsupported call back opcode %02X" % opcode)
         return
+    mesg['timestamp'] = str(time.time())
     update_status_mqtt(mesg)
     gc.collect()
 
@@ -688,6 +694,7 @@ def update_hass(name, state, brightness, cct):
             cct = 100 - cct
             hasscct = int(cct * 347 / 100 + 153)
         hass_mesg['color_temp'] = hasscct
+    hass_mesg['timestamp'] = str(time.time())
     try:
         if m_client:
             m_client.publish(hass_state_topic, json.dumps(hass_mesg).encode('utf-8'))
@@ -1394,6 +1401,7 @@ m_WiFi_connected = do_connect(SSID, PASS)
 if m_WiFi_connected:
     print_progress("Wi-Fi OK")
     wifi_error(0)
+    ntptime.settime()
     if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
     if MQTT_USER == '':
         MQTT_USER = None
@@ -1470,6 +1478,7 @@ while True:
             wifi_error(1)
             print("ERROR: Cannot connect back to Wi-Fi")
         else:
+            ntptime.settime()
             try:
                 m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
             except:
