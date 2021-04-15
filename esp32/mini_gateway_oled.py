@@ -22,6 +22,7 @@ import os
 import ubinascii
 import sys
 import json
+import ntptime
 #import esp
 #esp.osdebug(None)
 #import gc
@@ -203,11 +204,11 @@ def _setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
     """Internal method to set the mesh parameters to the BLE module. """
     send_command('MESHNAME={:s}'.format(name))
     if not expect_reply('OK'):
-        print("ERROR in setting Mesh Name")
+#        print("ERROR in setting Mesh Name")
         return False
     send_command('MESHPWD={:s}'.format(pwd))
     if not expect_reply('OK'):
-        print("ERROR in setting Mesh Password")
+#        print("ERROR in setting Mesh Password")
         return False
     return True
 
@@ -220,6 +221,7 @@ def setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
         time.sleep(0.5)
         trials = trials + 1
     if trials >= 4:
+        print("ERROR in setting Mesh params")
         return False
     trials = 0
     while (not resetBLEModule()) and (trials < 4):
@@ -692,6 +694,7 @@ def process_callback(devaddr, callback):
     else:
         if DEBUG: print("Unsupported call back opcode %02X" % opcode)
         return
+    mesg['timestamp'] = str(time.time())
     update_status_mqtt(mesg)
     if s1 != '' or s2 != '':
         print_results(s1, s2)
@@ -1390,6 +1393,7 @@ m_WiFi_connected = do_connect(SSID, PASS)
 if m_WiFi_connected:
     print_progress("Wi-Fi OK")
     wifi_error(0)
+    ntptime.settime()
     if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
     if MQTT_USER == '':
         MQTT_USER = None
@@ -1468,6 +1472,7 @@ while True:
             wifi_error(1)
             print("ERROR: Cannot connect back to Wi-Fi")
         else:
+            ntptime.settime()
             try:
                 m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
             except:
