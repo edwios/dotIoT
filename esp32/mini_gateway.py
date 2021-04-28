@@ -486,7 +486,7 @@ def check_callbacks():
 def process_callback(devaddr, callback):
     global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG, s1, s2
     gc.collect()
-    mesg = ""
+    mesg = {}
     if DEBUG: print("Processing call back from %04x" % devaddr)
     name = rev_lookup_device(devaddr)
     if (name is None) or (callback is None):
@@ -505,13 +505,14 @@ def process_callback(devaddr, callback):
     if len(data) == 0:
         return
     opcode = data[0]   
+    mesg['device_name'] = name
+    mesg['device_id'] = devaddr
     if opcode == 0xDC:
         # Status notify report
         if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
         bgt = data[1]
         cct = data[2]
         state = None
-        mesg = {"device_name":name}
         if bgt is not None:
             if bgt > 0:
                 state = 'on'
@@ -527,7 +528,6 @@ def process_callback(devaddr, callback):
         # +DATA:DB1102006464FF
         bgt = data[5]
         state = None
-        mesg = {"device_name":name}
         if bgt is not None:
             if bgt > 0:
                 state = 'on'
@@ -571,7 +571,7 @@ def process_callback(devaddr, callback):
             alrm_indexStr = '{:d}'.format(alrm_index)
             timeStr = '{:02d}:{:02d}:{:02d}'.format(alrm_hour, alrm_min, alrm_sec)
             #if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
-            mesg = {"device_name":name, "device_id":devaddr, "type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr, "alarm_days":alrm_dayomStr}
+            mesg.update({"type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr, "alarm_days":alrm_dayomStr})
     elif opcode == 0xE9 or opcode == 0xE4:
         # Time get
         year = data[3] + (data[4] << 8)
@@ -582,7 +582,8 @@ def process_callback(devaddr, callback):
         mi = data[8]
         sc = data[9]
         time_str = '{:02d}:{:02d}:{:02d}'.format(hr, mi, sc)
-        mesg = {"device_name":name, "device_id":devaddr, "time":time_str, "date":date_str}
+        mesg['time'] = time_str
+        mesg['date'] = date_str
         if opcode == 0xE9:
             mesg['type'] = 'get_time'
         else:
@@ -610,7 +611,7 @@ def process_callback(devaddr, callback):
             else:
                 tz_ew = 'West'
             tz = data[12]
-            mesg = {"device_name":name, "device_id":devaddr, "type":"astro", "meridian":meridian, "longitute":longstr, "equator":equator, "latitude":latstr, "timezone_dir":tz_ew, "timezone":tz}
+            mesg.update({"type":"astro", "meridian":meridian, "longitute":longstr, "equator":equator, "latitude":latstr, "timezone_dir":tz_ew, "timezone":tz})
         elif cbs == 0x82 or cbs == 0x83:     # Got Sunrise/Sunset time report
             time_h = data[5]
             time_m = data[6]
@@ -628,10 +629,8 @@ def process_callback(devaddr, callback):
                 # offset_mStr = '{:02d} min'.format(offset_m)
                 timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
                 offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
-                mesg = {"device_name":name, "device_id":devaddr, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
+                mesg.update({"type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr})
             else:
-                mesg['deviceName'] = name
-                mesg['deviceID'] = devaddr
                 mesg['type'] = 'astro'
         elif cbs == 0x84:
             # Get DST
@@ -651,7 +650,7 @@ def process_callback(devaddr, callback):
             else:
                 winter_comp = 1
             winter_offset = winter_comp * data[12]
-            mesg = {"device_name":name, "device_id":devaddr, "summer_start_d_m":summer_start_str, "summer_offset":summer_offset, "winter_start_d_m":winter_start_str, "winter_offset":winter_offset}
+            mesg.update({"summer_start_d_m":summer_start_str, "summer_offset":summer_offset, "winter_start_d_m":winter_start_str, "winter_offset":winter_offset})
         elif cbs == 0x85:     # Calculated astro time settings
             # +DATA:000b,23,EB110201850000000000000000000007000003B85B7FFD   
             # We look at Adjusted data only     
@@ -666,7 +665,7 @@ def process_callback(devaddr, callback):
             sunrise_dst = '{:02d}:{:02d}'.format(sunrise_h_dst, sunrise_m_dst)
             sunset_dst = '{:02d}:{:02d}'.format(sunset_h_dst, sunset_m_dst)
             if DEBUG: print("INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
-            mesg = {"device_name":name, "device_id":devaddr, "sunrise":sunrise_dst, "sunset":sunset_dst}
+            mesg.update({"sunrise":sunrise_dst, "sunset":sunset_dst})
         else:
             if DEBUG: print("Unsupported call back subcommand %02X (%02X)" % (opcode, cbs))
             return
