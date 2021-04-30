@@ -591,7 +591,19 @@ def process_callback(devaddr, callback):
     elif opcode == 0xEB:
         # Astro timers
         cbs = data[4]       # data[3] is fixed to 0x01
-        if cbs == 0x81:     # astro time geo settings
+        if cbs == 0x80:     # Countdown timer, [enable, HH, MM, hh, mm]
+            ena = data[5]
+            state = None
+            if ena == 1:
+                state = "enabled"
+            else:
+                state = "disabled"
+            HH = data[6]
+            MM = date[7]
+            hh = data[8]
+            mm = data[9]
+            mesg.update({'type':'countdown', 'state':state, 'config':{'hour':HH, 'minute':MM}, 'remain':{'hour':hh, 'minute':mm}})
+        elif cbs == 0x81:     # astro time geo settings
             if (data[5] == 0):
                 meridian = 'East'
             else:
@@ -829,6 +841,9 @@ def process_command(mqttcmd):
             elif (hcmd == "get_status"):
                 cmd(did, 0xda, [0x10])
                 _expectedCallBack = [0xdb, 0x00]
+            elif (hcmd == "get_countdown"):
+                cmd(did, 0xea, [0x10, 0x80])
+                _expectedCallBack = [0xeb, 0x01]
             elif (hcmd == "get_timer"):
                 if (hexdata != ''):
                     try:
@@ -873,6 +888,23 @@ def process_command(mqttcmd):
                         print("ERROR: invalid parameters, Bmm,Bdd,Emm,Edd,Offset (int),Enabled (0|1)")
                     else:
                         setdst(did, bmm, bdd, emm, edd, ofs, ena)
+            elif (hcmd == "set_countdown"):
+                # Set Countdown F5 11 02 06 HH MM
+                if (hexdata != ''):
+                    try:
+                        i = int(hexdata)
+                    except:
+                        i = 1
+                    if i == 0:
+                        # 0 means disable countdown
+                        cmd(did, 0xf5, [0x07, 0x00])
+                    else:
+                        hh = i // 60
+                        mm = i % 60
+                        cmd(did, 0xf5, [0x06, hh, mm])
+                        time.sleep(0.1)
+                        cmd(did, 0xf5, [0x07, 0x01])
+                    _expectedCallBack = 0
             elif (hcmd == 'raw'):
                 if hexdata != '':
                     hexlist = list(hexdata[i:i+2] for i in range(0, len(hexdata), 2))
