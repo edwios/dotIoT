@@ -905,6 +905,45 @@ def process_command(mqttcmd):
                         time.sleep(0.1)
                         cmd(did, 0xf5, [0x07, 0x01])
                     _expectedCallBack = 0
+            elif (hcmd == "set_group"):
+                # Set Countdown D7 11 02 01 LL HH
+                if (hexdata != ''):
+                    try:
+                        if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
+                            i = int(hexdata, 16)
+                        else:
+                            i = int(hexdata)
+                    except:
+                        i = 0x8001
+                    data = i.to_bytes(2, 'little')
+                    cmd(did, 0xD7, [0x01] + list(data))
+                    _expectedCallBack = 0
+            elif (hcmd == "del_group"):
+                # Set Countdown D7 11 02 00 LL HH
+                if (hexdata != ''):
+                    try:
+                        if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
+                            i = int(hexdata, 16)
+                        else:
+                            i = int(hexdata)
+                    except:
+                        i = 0x8001
+                    data = i.to_bytes(2, 'little')
+                    cmd(did, 0xD7, [0x00] + list(data))
+                    _expectedCallBack = 0
+            elif (hcmd == "set_remote"):
+                # Set Countdown F6 11 02 LL HH
+                if (hexdata != ''):
+                    try:
+                        if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
+                            i = int(hexdata, 16)
+                        else:
+                            i = int(hexdata)
+                    except:
+                        i = 0x8001
+                    data = i.to_bytes(2, 'little')
+                    cmd(did, 0xF6, list(data))
+                    _expectedCallBack = 0
             elif (hcmd == 'raw'):
                 if hexdata != '':
                     hexlist = list(hexdata[i:i+2] for i in range(0, len(hexdata), 2))
