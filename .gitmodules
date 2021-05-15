@@ -1,0 +1,3 @@
+[submodule "ESP32_LilyGo/Python/st7789_mpy"]
+	path = ESP32_LilyGo/Python/st7789_mpy
+	url = git@github.com:edwios/st7789_mpy.git
