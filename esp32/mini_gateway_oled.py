@@ -1148,6 +1148,7 @@ def process_config(conf):
             Device information including at least the Device name and Device address
     """
     global Meshname, Meshpass, m_devices
+    global wri_m, oled
     config = None
     if DEBUG: print("Process config %s" % conf)
     print_progress("Renew config")
@@ -1168,6 +1169,10 @@ def process_config(conf):
         Meshpass = mp
         setMeshParams(mn, mp)
     refresh_devices(config, Device_Cache)
+    # Print config
+    wri_m.set_textpos(oled, 16, 0)  # verbose = False to suppress console output
+    wri_m.printstring('M:{:s}'.format(Meshname))
+    oled.show()
     return True
 
 
