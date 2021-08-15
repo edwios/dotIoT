@@ -904,6 +904,18 @@ def process_command(mqttcmd):
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xc0, [0x10] + list(data))
                         m_expectedCallback = [0xc1, 0x00]
+            elif (hcmd == "del_scene"):
+                if (hexdata != ''):
+                    try:
+                        i = int(hexdata)
+                    except:
+                        print("ERROR: invalid parameters")
+                    if (i > 16):
+                        print("ERROR: Only 16 scenes")
+                    else:
+                        data = i.to_bytes(1, 'big')
+                        cmd(did, 0xee, [0x00] + list(data))
+                        m_expectedCallback = 0
             elif (hcmd == "set_time"):
                 if (hexdata == '' or hexdata == 'now'):
                     (yyyy,mo,dd,hh,mm,ss,_,_) = time.localtime()
