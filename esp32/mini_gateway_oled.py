@@ -25,8 +25,8 @@ import json
 import ntptime
 #import esp
 #esp.osdebug(None)
-#import gc
-#gc.collect()
+import gc
+gc.collect()
 from micropython import const
 
 DEFAULT_MESHNAME = secrets.DEFAULT_MESHNAME
@@ -72,6 +72,7 @@ m_WiFi_connected = False
 key1 = None
 m_client = None
 m_devices = None
+m_expectedCallback = 0
 m_systemstatus = 0
 m_cbreplies = []
 m_lt = 0
@@ -112,7 +113,7 @@ def do_connect(ssid, pwd):
     import network
     sta_if = network.WLAN(network.STA_IF)
     if not sta_if.isconnected():
-        if DEBUG: print('connecting to network...')
+        # if DEBUG: print('connecting to network...')
         sta_if.active(True)
         time.sleep(0.5)
         sta_if.connect(ssid, pwd)
@@ -123,7 +124,7 @@ def do_connect(ssid, pwd):
             WiFi_connected = False
             print("Error: timeout connecting to WLAN %s" % ssid)
         else:
-            if DEBUG: print("Connected to Wi-Fi")
+            # if DEBUG: print("Connected to Wi-Fi")
             WiFi_connected = True
         if WiFi_connected and DEBUG: print('Wi-Fi connected, network config:', sta_if.ifconfig())
         return WiFi_connected
@@ -134,7 +135,7 @@ def on_message(topic, msg):
     """Callback for MQTT published messages """
     m = msg.decode("utf-8")
     t = topic.decode("utf-8")
-    if DEBUG: print('MQTT received: %s from %s' % (m, t))
+    # if DEBUG: print('MQTT received: %s from %s' % (m, t))
     if (t == MQTT_SUB_TOPIC_CMD):
         process_command(m)
     if (t == MQTT_PUB_TOPIC_STATUS):
@@ -168,7 +169,7 @@ def initMQTT():
 
 def _send_command(cmd: str = 'AT'):
     """Internal method to send AT commands to BLE module appending 0D0A to the end"""
-    if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
+    # if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
     print_status(STATUS_TO_MESH)
 #    cmd = cmd + '\r\n'
     m_uart.write(cmd)
@@ -244,7 +245,7 @@ def setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
 
 def cacheMeshSecrets(name, pwd, cache_path=Mesh_Secrets):
     """Store mesh secrets in Flash"""
-    if DEBUG: print("Create cache for mesh secrets in %s" % cache_path)
+    # if DEBUG: print("Create cache for mesh secrets in %s" % cache_path)
     meshsecrets = ujson.loads('{' + '"meshname":"{:s}", "meshpass":"{:s}"'.format(name, pwd) +'}')
     if cache_path is None:
         return None
@@ -255,23 +256,23 @@ def cacheMeshSecrets(name, pwd, cache_path=Mesh_Secrets):
     else:
         filep.write(ujson.dumps(meshsecrets))
         filep.close()
-        if DEBUG: print("DEBUG: Cache for mesh secrets created")
+        # if DEBUG: print("DEBUG: Cache for mesh secrets created")
     return meshsecrets
 
 
 def retrieveMeshSecrets(def_name=DEFAULT_MESHNAME, def_pass=DEFAULT_MESHPWD, cache_path=Mesh_Secrets):
     """Get the stored or default mesh secrets"""
-    if DEBUG: print("DEBUG: Retrieving mesh secrets from %s" % Mesh_Secrets)
+    # if DEBUG: print("DEBUG: Retrieving mesh secrets from %s" % Mesh_Secrets)
     if cache_path is None:
         return None
     try:
         filep = open(cache_path, 'r')
     except:
         # Mesh secrets not exist, create one
-        if DEBUG: print("DEBUG: No mesh secret stored yet, creating one")
+        # if DEBUG: print("DEBUG: No mesh secret stored yet, creating one")
         meshsecrets = cacheMeshSecrets(def_name, def_pass, cache_path)
     else:
-        if DEBUG: print("DEBUG: Reading mesh secrets from cache")
+        # if DEBUG: print("DEBUG: Reading mesh secrets from cache")
         jj = filep.read()
         meshsecrets = ujson.loads(jj)
         filep.close()
@@ -281,7 +282,7 @@ def retrieveMeshSecrets(def_name=DEFAULT_MESHNAME, def_pass=DEFAULT_MESHPWD, cac
 def refresh_devices(config, cache_path):
     """Refresh devices from configuration received"""
     global m_devices, Device_Cache
-    if DEBUG: print("DEBUG: Refreshing device database")
+    # if DEBUG: print("DEBUG: Refreshing device database")
     print_progress("Refresh devices")
     try:
         m_devices = config['devices']
@@ -296,25 +297,25 @@ def refresh_devices(config, cache_path):
         else:
             filep.write(ujson.dumps(m_devices))
             filep.close()
-            if DEBUG: print("DEBUG: Written device DB to cache")
+            # if DEBUG: print("DEBUG: Written device DB to cache")
     return m_devices
 
 
 
 def retrieveDeviceDB(cache_path):
     """Restore device from DB"""
-    if DEBUG: print("Retrieving devices from cache %s" % cache_path)
+    # if DEBUG: print("Retrieving devices from cache %s" % cache_path)
     devices = None
     try:
         filep = open(cache_path, 'r')
     except:
-        if DEBUG: print("DEBUG: Device cache not exist yet")
+        # if DEBUG: print("DEBUG: Device cache not exist yet")
         pass
     else:
         jj = filep.read()
         devices = ujson.loads(jj)
         filep.close()
-        if DEBUG: print("DEBUG: Device DB loaded from cache")
+        # if DEBUG: print("DEBUG: Device DB loaded from cache")
     return devices
 
 
@@ -324,7 +325,7 @@ def lookup_device(name):
     devaddr = 0
     if m_devices is None or name == '':
         return devaddr
-    if DEBUG: print("DEBUG: Looking up device ID from database")
+    # if DEBUG: print("DEBUG: Looking up device ID from database")
     for dev in m_devices:
         try:
             devname = dev['deviceName']
@@ -338,7 +339,7 @@ def lookup_device(name):
             if tmp > 255:
                 # from iOS share, the endian is wrong (<=v2.0.3)
                 devaddr = tmp >> 8 + ((tmp & 0x0F) << 8)
-            if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
+            # if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
             break
     return devaddr
 
@@ -349,7 +350,7 @@ def rev_lookup_device(devaddr):
     name = None
     if m_devices is None or devaddr == 0:
         return name
-    if DEBUG: print("DEBUG: Looking up device name from database")
+    # if DEBUG: print("DEBUG: Looking up device name from database")
     for dev in m_devices:
         try:
             tmp = dev['deviceAddress']
@@ -364,7 +365,7 @@ def rev_lookup_device(devaddr):
                 name = dev['deviceName']
             except:
                 name = None
-            if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
+            # if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
             break
     if name is None:
         name = 'No name'
@@ -401,7 +402,7 @@ def mesh_send_asc(dst: int = 0x00, cmd: int = 0xd0, data: str = None):
     if length == 0:
         return False
     atcommand = 'SEND={:s},{:s},{:s}{:s}'.format(dst, str(length), cmd, data)
-    if DEBUG: print("Sending to UART: %s" % atcommand)
+    # if DEBUG: print("Sending to UART: %s" % atcommand)
     trials = 0
     send_command(atcommand)
     while (not expect_reply('OK')) and (trials < 4):
@@ -438,7 +439,7 @@ def getReply(timeout=10):
             if file[0] == m_uart:
                 ch = m_uart.read(1)
                 data = data + chr(ch[0])
-                #if DEBUG: print("getReply: %s" % data)
+                # if DEBUG: print("getReply: %s" % data)
 
     if data is not '':
         # Show the byte as 2 hex digits then in the default way
@@ -452,8 +453,8 @@ def getReply(timeout=10):
                     m_cbreplies.append(line)
                 else:
                     reply.append(line)
-        if DEBUG: print("DEBUG: received %d lines of reply as %s" % (len(reply), reply))
-        if DEBUG: print("DEBUG: received %d lines of callbacks as %s" % (len(m_cbreplies), m_cbreplies))
+        # if DEBUG: print("DEBUG: received %d lines of reply as %s" % (len(reply), reply))
+        # if DEBUG: print("DEBUG: received %d lines of callbacks as %s" % (len(m_cbreplies), m_cbreplies))
         return reply
 
 
@@ -475,7 +476,7 @@ def check_callbacks():
                     length = int(lengthstr)
                 except:
                     length = 0
-                if DEBUG: print("DEBUG: Got call back from %s with %s" % (devaddrstr, callback[:length*2]))
+                # if DEBUG: print("DEBUG: Got call back from %s with %s" % (devaddrstr, callback[:length*2]))
                 print_status(STATUS_FROM_MESH)
                 try:
                     t = ubinascii.unhexlify(devaddrstr)
@@ -492,12 +493,12 @@ def check_callbacks():
 s1 = ''
 s2 = ''
 def process_callback(devaddr, callback):
-    global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG, s1, s2
+    global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG, s1, s2, m_expectedCallback
     s1 = ''
     s2 = ''
     gc.collect()
-    mesg = ""
-    if DEBUG: print("Processing call back from %04x" % devaddr)
+    mesg = {}
+    # if DEBUG: print("Processing call back from %04x" % devaddr)
     name = rev_lookup_device(devaddr)
     if (name is None) or (callback is None):
         print("ERROR: process_callback(): cannot find device name with address %d or no callback is given" % devaddr)
@@ -516,9 +517,10 @@ def process_callback(devaddr, callback):
         return
     opcode = data[0]
     print_results('{:s},{:02X}'.format(name[:16], opcode), None)
+    mesg.update({"device_name":name, "device_id":devaddr})
     if opcode == 0xDC:
         # Status notify report
-        if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
+        # if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
         bgt = data[1]
         cct = data[2]
         state = None
@@ -528,10 +530,9 @@ def process_callback(devaddr, callback):
                 state = 'on'
             else:
                 state = 'off'
-            mesg['state'] = state
-            mesg['brightness'] = bgt
+            mesg.update({"state":state, "brightness":bgt})
         if cct is not None:
-            mesg['cct'] = cct
+            mesg.update({"cct":cct})
         update_hass(name, state, bgt, cct)
         s1 = '{:s}/{:s}'.format(name, state)
     elif opcode == 0xDB:
@@ -545,8 +546,7 @@ def process_callback(devaddr, callback):
                 state = 'on'
             else:
                 state = 'off'
-            mesg['state'] = state
-            mesg['brightness'] = bgt
+            mesg.update({"state":state, "brightness":bgt})
         update_hass(name, state, bgt, None)
         s1 = '{:s}/{:s}'.format(name, state)
     elif opcode == 0xE7:
@@ -583,12 +583,12 @@ def process_callback(devaddr, callback):
             alrm_sceneStr = '{:d}'.format(alrm_scene)
             alrm_indexStr = '{:d}'.format(alrm_index)
             timeStr = '{:02d}:{:02d}:{:02d}'.format(alrm_hour, alrm_min, alrm_sec)
-            #if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
-            mesg = {"device_name":name, "device_id":devaddr, "type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr, "alarm_days":alrm_dayomStr}
+            # if DEBUG: print("%s INFO: %s has timer set to turn %s %s %s %s %s at %s and is %s" % (time.strftime('%F %H:%M:%S'), callbackDeviceName, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
+            mesg.update({"type":"timer", "time":timeStr, "scene_index":alrm_sceneStr, "alarm_index":alrm_indexStr, "alarm_type":alrm_typeStr, "alarm_status":alrm_statusStr, "action":alrm_actionStr, "alarm_days":alrm_dayomStr})
             temp = '{:s} {:s} {:s}'.format(alrm_indexStr, alrm_actionStr, alrm_dayomStr)
             s1= temp
             s2 = timeStr
-    elif opcode == 0xE9:
+    elif opcode == 0xE9 or opcode == 0xE4:
         # Time get
         year = data[3] + (data[4] << 8)
         month = data[5]
@@ -598,13 +598,31 @@ def process_callback(devaddr, callback):
         mi = data[8]
         sc = data[9]
         time_str = '{:02d}:{:02d}:{:02d}'.format(hr, mi, sc)
-        mesg = {"device_name":name, "device_id":devaddr, "type":"time", "time":time_str, "date":date_str}
+        mesg.update({"time": time_str, "date": date_str})
+        if opcode == 0xE9:
+            mesg.update({"type":"get_time"})
+        else:
+            mesg.update({"type":"set_time"})
         s1 = 'Time: {:s}'.format(name)
         s2 = '{:s} {:s}'.format(date_str, time_str)
     elif opcode == 0xEB:
         # Astro timers
         cbs = data[4]       # data[3] is fixed to 0x01
-        if cbs == 0x81:     # astro time geo settings
+        if cbs == 0x80:     # Countdown timer, [enable, HH, MM, hh, mm]
+            ena = data[5]
+            state = None
+            if ena == 1:
+                state = "enabled"
+            else:
+                state = "disabled"
+            HH = data[6]
+            MM = data[7]
+            hh = data[8]
+            mm = data[9]
+            mesg.update({'type':'countdown', 'state':state, 'config':{'hour':HH, 'minute':MM}, 'remain':{'hour':hh, 'minute':mm}})
+            s1 = 'Set: {:02d}:{02d}'.format(HH, MM)
+            s2 = 'Rem: {:02d}:{02d}'.format(hh, mm)
+        elif cbs == 0x81:     # astro time geo settings
             if (data[5] == 0):
                 meridian = 'East'
             else:
@@ -624,7 +642,7 @@ def process_callback(devaddr, callback):
             else:
                 tz_ew = 'West'
             tz = data[12]
-            mesg = {"device_name":name, "device_id":devaddr, "type":"astro", "meridian":meridian, "longitute":longstr, "equator":equator, "latitude":latstr, "timezone_dir":tz_ew, "timezone":tz}
+            mesg.update({"type":"astro", "meridian":meridian, "longitute":longstr, "equator":equator, "latitude":latstr, "timezone_dir":tz_ew, "timezone":tz})
         elif cbs == 0x82 or cbs == 0x83:     # Got Sunrise/Sunset time report
             time_h = data[5]
             time_m = data[6]
@@ -642,15 +660,13 @@ def process_callback(devaddr, callback):
                 offset_mStr = '{:02d} min'.format(offset_m)
                 timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
                 offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
-                if DEBUG: print("INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (name, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
-                mesg = {"device_name":name, "device_id":devaddr, "type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr}
+                # if DEBUG: print("INFO: %s has astro timer set to turn %s %s %s %s %s at %s and is %s" % (name, actionStr, offset_hStr, offset_mStr, offsettypeStr, rtype, timeStr, statusStr))
+                mesg.update({"type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr})
                 sstime = '{:s}/{:s}{:s}'.format(timeStr, m_rastrooffsets1[data[9]], offsetStr)
                 s1 = rtype
                 s2 = sstime
             else:
-                mesg['deviceName'] = name
-                mesg['deviceID'] = devaddr
-                mesg['type'] = 'astro'
+                mesg.update({"type":"astro"})
         elif cbs == 0x84:
             # Get DST
             summer_start_month = data[5]
@@ -669,7 +685,7 @@ def process_callback(devaddr, callback):
             else:
                 winter_comp = 1
             winter_offset = winter_comp * data[12]
-            mesg = {"device_name":name, "device_id":devaddr, "summer_start_d_m":summer_start_str, "summer_offset":summer_offset, "winter_start_d_m":winter_start_str, "winter_offset":winter_offset}
+            mesg.update({"summer_start_d_m":summer_start_str, "summer_offset":summer_offset, "winter_start_d_m":winter_start_str, "winter_offset":winter_offset})
         elif cbs == 0x85:     # Calculated astro time settings
             # +DATA:000b,23,EB110201850000000000000000000007000003B85B7FFD   
             # We look at Adjusted data only     
@@ -684,17 +700,41 @@ def process_callback(devaddr, callback):
 #            sunset_m_dst = data[8]
             sunrise_dst = '{:02d}:{:02d}'.format(sunrise_h_dst, sunrise_m_dst)
             sunset_dst = '{:02d}:{:02d}'.format(sunset_h_dst, sunset_m_dst)
-            if DEBUG: print("INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
-            mesg = {"device_name":name, "device_id":devaddr, "sunrise":sunrise_dst, "sunset":sunset_dst}
+        #    if DEBUG: print("INFO: Sunrise at %02d:%02d, sunset at %02d:%02d" % (sunrise_h_dst, sunrise_m_dst, sunset_h_dst, sunset_m_dst))
+            mesg.update({"sunrise":sunrise_dst, "sunset":sunset_dst})
             s1 = 'Sunrise: {:s}'.format(sunrise_dst)
             s2 = 'Sunset: {:s}'.format(sunset_dst)
         else:
-            if DEBUG: print("Unsupported call back subcommand %02X (%02X)" % (opcode, cbs))
+            # if DEBUG: print("Unsupported call back subcommand %02X (%02X)" % (opcode, cbs))
             return
+    elif opcode == 0xC1:
+        #c1110201e1ppppppppeeeeeeee
+        cbs = data[4]
+        if cbs == 0xE1:
+            # Get_MajorUsage
+            r1or2 = data[3]    #first or second report
+            if r1or2 == 1:
+                # First report contains the power and energy usages
+                kwh = int((data[8]<<24) + (data[7]<<16) + (data[6]<<8) + data[5])
+                wattage = int((data[12]<<24) + (data[11]<<16) + (data[10]<<8) + data[9])
+                mesg.update({"type":"power", "power":{"value":wattage, "unit":"W"}, "energy":{"value":kwh, "unit":"kWh"}})
+                s1 = '{:d}W'.format(wattage)
+                s2 = '{:d}kWh'.format(kwh)
+            if r1or2 == 2:
+                voltage = int(data[8]<<24) + (data[7]<<16) + (data[6]<<8) + (data[5])
+                current = int((data[12]<<24) + (data[11]<<16) + (data[10]<<8) + data[9])
+                mesg.update({"type":"electricity", "voltage":{"value":voltage, "unit":"V"}, "current":{"value":current, "unit":"A"}})
+                s1 = '{:d}V'.format(voltage)
+                s2 = '{:d}A'.format(current)
+    elif (m_expectedCallback > 0) and (opcode == m_expectedCallback):
+    #    if DEBUG: print("Call back subcommand: %02X" % opcode)
+    #    if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
+        mesg.update({"opcode":'{:02X}'.format(opcode), "pars":callback[2:26], "type":"callback"})
+        s1 = 'Bad op:{:02X}'.format(opcode)
     else:
-        if DEBUG: print("Unsupported call back opcode %02X" % opcode)
+    #    if DEBUG: print("Unsupported call back opcode %02X" % opcode)
         return
-    mesg['timestamp'] = str(time.time())
+    mesg.update({"timestamp":str(time.time())})
     update_status_mqtt(mesg)
     if s1 != '' or s2 != '':
         print_results(s1, s2)
@@ -740,7 +780,7 @@ def update_status_mqtt(mesg):
     except:
         print("ERROR: update_status_mqtt(mesg) has invalid mesg")
         return
-    if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
+#    if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
     if m_client:
         m_client.publish(topic, jstr.encode('utf-8'))
 
@@ -758,8 +798,8 @@ def process_command(mqttcmd):
                     Hall light/off
                     Table lamp/dim:25
     """
-    global DEBUG, Meshname, Meshpass
-    if DEBUG: print("Process command %s" % mqttcmd)
+    global DEBUG, Meshname, Meshpass, m_expectedCallback
+#    if DEBUG: print("Process command %s" % mqttcmd)
     print_progress(mqttcmd[:16])
     if mqttcmd is not '':
         if '/' not in mqttcmd:
@@ -788,7 +828,7 @@ def process_command(mqttcmd):
         except:
             did = lookup_device(dids)
         if (did > 0):
-            if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s, cmd: %s" % (mqttcmd, did, hcmd))
+            # if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s, cmd: %s" % (mqttcmd, did, hcmd))
             if (hcmd == "on"):
                 cmd(did, 0xd0, ON_DATA)
             elif (hcmd == "off"):
@@ -833,28 +873,28 @@ def process_command(mqttcmd):
                         cmd(did, 0xe2, [0x04] + list(data))
             elif (hcmd == "get_geo"):
                 cmd(did, 0xea, [0x08, 0x81])
-                _expectedCallBack = [0xeb, 0x81]       
+                m_expectedCallback = [0xeb, 0x81]       
             elif (hcmd == "get_sunrise"):
                 cmd(did, 0xea, [0x08, 0x82])
-                _expectedCallBack = [0xeb, 0x82]
+                m_expectedCallback = [0xeb, 0x82]
             elif (hcmd == "get_sunset"):
                 cmd(did, 0xea, [0x08, 0x83])
-                _expectedCallBack = [0xeb, 0x83]
+                m_expectedCallback = [0xeb, 0x83]
             elif (hcmd == "get_dst"):
                 cmd(did, 0xea, [0x08, 0x84])
-                _expectedCallBack = [0xeb, 0x84]
+                m_expectedCallback = [0xeb, 0x84]
             elif (hcmd == "get_astro"):
                 cmd(did, 0xea, [0x08, 0x85])
-                _expectedCallBack = [0xeb, 0x85]
+                m_expectedCallback = [0xeb, 0x85]
             elif (hcmd == "get_time"):
                 cmd(did, 0xe8, [0x10])
-                _expectedCallBack = [0xe9, 0x00]
+                m_expectedCallback = [0xe9, 0x00]
             elif (hcmd == "get_power"):
                 cmd(did, 0xc0, [0x08, 0xe1])
-                _expectedCallBack = [0xc1, 0xe1]
+                m_expectedCallback = [0xc1, 0xe1]
             elif (hcmd == "get_status"):
                 cmd(did, 0xda, [0x10])
-                _expectedCallBack = [0xdb, 0x00]
+                m_expectedCallback = [0xdb, 0x00]
             elif (hcmd == "get_timer"):
                 if (hexdata != ''):
                     try:
@@ -866,7 +906,7 @@ def process_command(mqttcmd):
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xe6, [0x10] + list(data))
-                        _expectedCallBack = [0xe7, 0xa5]
+                        m_expectedCallback = [0xe7, 0xa5]
             elif (hcmd == "get_scene"):
                 if (hexdata != ''):
                     try:
@@ -878,7 +918,19 @@ def process_command(mqttcmd):
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xc0, [0x10] + list(data))
-                        _expectedCallBack = [0xc1, 0x00]
+                        m_expectedCallback = [0xc1, 0x00]
+            elif (hcmd == "del_scene"):
+                if (hexdata != ''):
+                    try:
+                        i = int(hexdata)
+                    except:
+                        print("ERROR: invalid parameters")
+                    if (i > 16):
+                        print("ERROR: Only 16 scenes")
+                    else:
+                        data = i.to_bytes(1, 'big')
+                        cmd(did, 0xee, [0x00] + list(data))
+                        m_expectedCallback = 0
             elif (hcmd == "set_time"):
                 if (hexdata == '' or hexdata == 'now'):
                     (yyyy,mo,dd,hh,mm,ss,_,_) = time.localtime()
@@ -910,10 +962,10 @@ def process_command(mqttcmd):
                         return
                     try:
                         t = ubinascii.unhexlify(hexlist[1])
-                        _expectedCallBack = int(t[0])
+                        m_expectedCallback = int(t[0])
                     except:
                         print("ERROR: Illegal callback in raw %s" % hexlist[1])
-                        _expectedCallBack = 0
+                        m_expectedCallback = 0
                     parsstr = hexlist[2:]
                     pars = []
                     for par in parsstr:
@@ -995,7 +1047,7 @@ def settime(did, yyyy=0,mo=0,dd=0,hh=0,mm=0,ss=0):
 
 def process_hass(topic, msg):
     global DEBUG
-    if DEBUG: print("Process HASS command %s at topic %s" % (msg, topic))
+    # if DEBUG: print("Process HASS command %s at topic %s" % (msg, topic))
     ts = topic.split('/')
     if ts is None:
         # We don't handle topics without '/'
@@ -1011,7 +1063,7 @@ def process_hass(topic, msg):
         print("ERROR: process_hass(): Topic does not contain device name (%s)" % device_name)
         return
     if device_name is not None:
-        if DEBUG: print("HASS control of device %s" % device_name)
+        # if DEBUG: print("HASS control of device %s" % device_name)
         try:
             mqtt_json = json.loads(msg)
         except:
@@ -1043,9 +1095,9 @@ def process_hass(topic, msg):
             did = lookup_device(device_name)
         else:
             device_name = rev_lookup_device(did)
-        if DEBUG: print("HASS control %s for state: %s, brightness %s, cct: %s, color: %s" % (device_name, state, brightness, cct, color))
+        # if DEBUG: print("HASS control %s for state: %s, brightness %s, cct: %s, color: %s" % (device_name, state, brightness, cct, color))
         if (did > 0):
-            if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s" % (msg, did))
+            # if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s" % (msg, did))
             if (state == "on"):
                 cmd(did, 0xd0, ON_DATA)
             if (state == "off"):
@@ -1125,7 +1177,7 @@ def process_hass(topic, msg):
 
 def cmd(device_addr, op_code, pars):
     """Properly format mesh command before sending to mesh"""
-    if DEBUG: print("Sending to %s op code %s and pars %s" % (device_addr, op_code, pars))
+    # if DEBUG: print("Sending to %s op code %s and pars %s" % (device_addr, op_code, pars))
     Dstdev = '{:04x}'.format(device_addr)
     Opcode = '{:02x}'.format(op_code)
     Params = ''
@@ -1136,7 +1188,7 @@ def cmd(device_addr, op_code, pars):
 
 def process_status(status):
     """Process statuses received from Mesh"""
-    if DEBUG: print("Process status %s" % status)
+    # if DEBUG: print("Process status %s" % status)
     pass
 
 
@@ -1150,7 +1202,7 @@ def process_config(conf):
     global Meshname, Meshpass, m_devices
     global wri_m, oled
     config = None
-    if DEBUG: print("Process config %s" % conf)
+    # if DEBUG: print("Process config %s" % conf)
     print_progress("Renew config")
     try:
         config = ujson.loads(conf)
@@ -1164,7 +1216,7 @@ def process_config(conf):
         mn = Meshname
         mp = Meshpass
     if (mn != Meshname) or (mp != Meshpass):
-        if DEBUG: print("DEBUG: Setting new mesh name and password")
+        # if DEBUG: print("DEBUG: Setting new mesh name and password")
         Meshname = mn
         Meshpass = mp
         setMeshParams(mn, mp)
@@ -1362,7 +1414,7 @@ if key1.value() == 0:
 
 if released:
     """Button pressed during boot, change to config #2"""
-    if DEBUG: print("DEBUG: Switch to alt config")
+    # if DEBUG: print("DEBUG: Switch to alt config")
     import config_oled_alt as config_alt
     import secrets_alt
 
@@ -1384,14 +1436,7 @@ if released:
     except:
         MQTT_PASS = None
 
-# Print config
-wri_m.set_textpos(oled, 16, 0)  # verbose = False to suppress console output
-wri_m.printstring('M:{:s}'.format(DEFAULT_MESHNAME))
-wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
-wri_m.printstring('H:{:s}'.format(MQTT_SERVER))
-oled.show()
-
-if DEBUG: print("Connecting to Wi-Fi %s", SSID)
+# if DEBUG: print("Connecting to Wi-Fi %s", SSID)
 wifi_error(2)
 m_WiFi_connected = do_connect(SSID, PASS)
 
@@ -1399,7 +1444,7 @@ if m_WiFi_connected:
     print_progress("Wi-Fi OK")
     wifi_error(0)
     ntptime.settime()
-    if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
+    # if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
     if MQTT_USER == '':
         MQTT_USER = None
     if MQTT_PASS == '':
@@ -1415,7 +1460,7 @@ if m_WiFi_connected:
         m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
         mqtt_error(0)
 else:
-    if DEBUG: print("Error connecting to Wi-Fi")
+    # if DEBUG: print("Error connecting to Wi-Fi")
     wifi_error(1)
 
 
@@ -1432,10 +1477,17 @@ except:
 m_meshsecrets = retrieveMeshSecrets(DEFAULT_MESHNAME, DEFAULT_MESHPWD, Mesh_Secrets)
 Meshname = m_meshsecrets['meshname']
 Meshpass = m_meshsecrets['meshpass']
-if DEBUG: print("Using mesh name %s and pass %s" % (Meshname, Meshpass))
+# if DEBUG: print("Using mesh name %s and pass %s" % (Meshname, Meshpass))
 m_devices = retrieveDeviceDB(Device_Cache)
 
-if DEBUG: print("Initialising UART to BLE")
+# Print config
+wri_m.set_textpos(oled, 16, 0)  # verbose = False to suppress console output
+wri_m.printstring('M:{:s}'.format(Meshname))
+wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
+wri_m.printstring('H:{:s}'.format(MQTT_SERVER))
+oled.show()
+
+# if DEBUG: print("Initialising UART to BLE")
 print_progress("Init UART")
 m_uart = UART(2, tx=UART_TX, rx=UART_RX)                         # init with given baudrate
 m_uart.init(115200, bits=8, parity=None, stop=1, timeout=10)
@@ -1460,7 +1512,7 @@ print_progress("                ")
 #m_systemstatus = 0  # Reset system status so that new status can be updated within the loop
 print_status(m_systemstatus)
 time.sleep(0.1)
-if DEBUG: print("Entering infinte loop")
+# if DEBUG: print("Entering infinte loop")
 # print_results(">", ">>")
 while True:
     # Processes MQTT network traffic, callbacks and reconnections. (Blocking)
