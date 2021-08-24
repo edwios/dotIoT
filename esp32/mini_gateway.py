@@ -70,7 +70,7 @@ key1 = None
 status_led = []
 m_client = None
 m_devices = None
-m_expectedCallback = ""
+m_expectedCallback = None
 m_systemstatus = 0
 m_cbreplies = []
 Meshname = DEFAULT_MESHNAME
@@ -697,10 +697,18 @@ def process_callback(devaddr, callback):
                 current = (data[12]<<24) + (data[11]<<16) + (data[10]<<8) + data[9]
                 mesg.update({"type":"electricity", "voltage":{"value":voltage, "unit":"V"}, "current":{"value":current, "unit":"A"}})
             update_hass2(mesg)
-    elif (m_expectedCallback > 0) and (opcode == m_expectedCallback):
-        if DEBUG: print("Call back subcommand: %02X" % opcode)
-        if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
-        mesg.update({"opcode":'{:02X}'.format(opcode), "pars":callback[2:26], "type":"callback"})
+    elif m_expectedCallback is not None:
+        if len(m_expectedCallback) > 1:
+            """
+            Todo:
+            m_expectedCallback shall be a stack consists of the array [device id, opcode, subcommand, pars]
+            As more and more opcode callbacks are supported, m_expectedCallback will have mush less significant
+            """
+            if (opcode == m_expectedCallback[1]):
+                if DEBUG: print("Call back subcommand: %02X" % opcode)
+                if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
+                mesg.update({"opcode":'{:02X}'.format(opcode), "pars":callback[2:26], "type":"callback"})
+                m_expectedCallback = None
     else:
         if DEBUG: print("Unsupported call back opcode %02X" % opcode)
         return
@@ -855,31 +863,31 @@ def process_command(mqttcmd):
                         cmd(did, 0xe2, [0x04] + list(data))
             elif (hcmd == "get_geo"):
                 cmd(did, 0xea, [0x08, 0x81])
-                m_expectedCallback = [0xeb, 0x81]       
+                m_expectedCallback = [did, 0xeb, 0x81]       
             elif (hcmd == "get_sunrise"):
                 cmd(did, 0xea, [0x08, 0x82])
-                m_expectedCallback = [0xeb, 0x82]
+                m_expectedCallback = [did, 0xeb, 0x82]
             elif (hcmd == "get_sunset"):
                 cmd(did, 0xea, [0x08, 0x83])
-                m_expectedCallback = [0xeb, 0x83]
+                m_expectedCallback = [did, 0xeb, 0x83]
             elif (hcmd == "get_dst"):
                 cmd(did, 0xea, [0x08, 0x84])
-                m_expectedCallback = [0xeb, 0x84]
+                m_expectedCallback = [did, 0xeb, 0x84]
             elif (hcmd == "get_astro"):
                 cmd(did, 0xea, [0x08, 0x85])
-                m_expectedCallback = [0xeb, 0x85]
+                m_expectedCallback = [did, 0xeb, 0x85]
             elif (hcmd == "get_time"):
                 cmd(did, 0xe8, [0x10])
-                m_expectedCallback = [0xe9, 0x00]
+                m_expectedCallback = [did, 0xe9, 0x00]
             elif (hcmd == "get_power"):
                 cmd(did, 0xc0, [0x08, 0xe1])
-                m_expectedCallback = [0xc1, 0xe1]
+                m_expectedCallback = [did, 0xc1, 0xe1]
             elif (hcmd == "get_status"):
                 cmd(did, 0xda, [0x10])
-                m_expectedCallback = [0xdb, 0x00]
+                m_expectedCallback = [did, 0xdb, 0x00]
             elif (hcmd == "get_countdown"):
                 cmd(did, 0xea, [0x10, 0x80])
-                m_expectedCallback = [0xeb, 0x01]
+                m_expectedCallback = [did, 0xeb, 0x01]
             elif (hcmd == "get_timer"):
                 if (hexdata != ''):
                     try:
@@ -891,7 +899,7 @@ def process_command(mqttcmd):
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xe6, [0x10] + list(data))
-                        m_expectedCallback = [0xe7, 0xa5]
+                        m_expectedCallback = [did, 0xe7, 0xa5]
             elif (hcmd == "get_scene"):
                 if (hexdata != ''):
                     try:
@@ -903,7 +911,7 @@ def process_command(mqttcmd):
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xc0, [0x10] + list(data))
-                        m_expectedCallback = [0xc1, 0x00]
+                        m_expectedCallback = [did, 0xc1, 0x00]
             elif (hcmd == "del_scene"):
                 if (hexdata != ''):
                     try:
@@ -915,7 +923,7 @@ def process_command(mqttcmd):
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xee, [0x00] + list(data))
-                        m_expectedCallback = 0
+                        m_expectedCallback = None
             elif (hcmd == "set_time"):
                 if (hexdata == '' or hexdata == 'now'):
                     (yyyy,mo,dd,hh,mm,ss,_,_) = time.localtime()
@@ -952,7 +960,7 @@ def process_command(mqttcmd):
                         cmd(did, 0xf5, [0x06, hh, mm])
                         time.sleep(0.1)
                         cmd(did, 0xf5, [0x07, 0x01])
-                    m_expectedCallback = 0
+                    m_expectedCallback = None
             elif (hcmd == "set_group"):
                 # Set Countdown D7 11 02 01 LL HH
                 if (hexdata != ''):
@@ -965,7 +973,7 @@ def process_command(mqttcmd):
                         i = 0x8001
                     data = i.to_bytes(2, 'little')
                     cmd(did, 0xD7, [0x01] + list(data))
-                    m_expectedCallback = 0
+                    m_expectedCallback = None
             elif (hcmd == "del_group"):
                 # Set Countdown D7 11 02 00 LL HH
                 if (hexdata != ''):
@@ -978,7 +986,7 @@ def process_command(mqttcmd):
                         i = 0x8001
                     data = i.to_bytes(2, 'little')
                     cmd(did, 0xD7, [0x00] + list(data))
-                    m_expectedCallback = 0
+                    m_expectedCallback = None
             elif (hcmd == "set_remote"):
                 # Set Countdown F6 11 02 LL HH
                 if (hexdata != ''):
@@ -991,10 +999,10 @@ def process_command(mqttcmd):
                         i = 0x8001
                     data = i.to_bytes(2, 'little')
                     cmd(did, 0xF6, list(data))
-                    m_expectedCallback = 0
+                    m_expectedCallback = None
             elif (hcmd == "power"):
                 cmd(did, 0xC0, [0x08, 0xE1])
-                m_expectedCallback = 0
+                m_expectedCallback = None
             elif (hcmd == 'raw'):
                 if hexdata != '':
                     hexlist = list(hexdata[i:i+2] for i in range(0, len(hexdata), 2))
@@ -1006,10 +1014,10 @@ def process_command(mqttcmd):
                         return
                     try:
                         t = ubinascii.unhexlify(hexlist[1])
-                        m_expectedCallback = int(t[0])
+                        m_expectedCallback = [did, int(t[0])]
                     except:
                         print("ERROR: Illegal callback in raw %s" % hexlist[1])
-                        m_expectedCallback = 0
+                        m_expectedCallback = None
                     parsstr = hexlist[2:]
                     pars = []
                     for par in parsstr:
