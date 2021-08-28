@@ -5,7 +5,7 @@ MQTT_SERVER = '10.0.1.250'
 #MQTT_SERVER = '192.168.1.143'
 
 # MQTT client config
-MQTT_CLIENT_ID = 'Weather_TV2'
+MQTT_CLIENT_ID = 'Weather_TV1'
 MQTT_TOPIC = 'sensornet/env/+/status'
 MQTT_TOPIC_PREFIX = 'sensornet/' + MQTT_CLIENT_ID + '/'
 
@@ -29,3 +29,5 @@ CS=5
 
 DISPLAY_WIDTH=128
 DISPLAY_HEIGHT=64
+
+STYLE=1

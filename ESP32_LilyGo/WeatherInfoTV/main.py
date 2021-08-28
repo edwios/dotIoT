@@ -6,6 +6,9 @@ import ssd1306
 import config
 import ujson
 import ntptime
+from writer import Writer
+import freesans20
+import font6
 
 DEBUG=False
 
@@ -140,7 +143,7 @@ def initMQTT():
 
 def print_status(display, hasnet, hasmqtt, hasupdate, batt_lvl):
     rtc = RTC()
-    status = ''
+    status = ' '
     if hasupdate:
         status = '*'
     if not hasnet:
@@ -149,13 +152,18 @@ def print_status(display, hasnet, hasmqtt, hasupdate, batt_lvl):
         status = 'MQTT %s' % status
     (Y, M, D, h, m, s, W, ms) = time.localtime(time.mktime(time.localtime())+7200)
     datetime = '{:02d}:{:02d}'.format(h, m)
-    status = '%d%% %s %s' % (batt_lvl, status, datetime)
+    batts = '%d%%' % (batt_lvl)
     if len(m_all_devices) > 0:
         display.text(m_all_devices[m_selected_device_idx], 0, 0, 1)
     display.fill_rect(0,0,127,16,0)
     display.text(m_selected_device, 0, 0, 1)
     display.fill_rect(0,48,127,16,0)
-    display.text(status, 0, 48, 1)
+    display.text(batts, 0, 48, 1)
+    wris = Writer(display, font6, verbose=False)
+    wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(datetime), row = 0)
+    wris.printstring(datetime)
+    wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(status), row = 48)
+    wris.printstring(status)
     display.show()
 
 
@@ -165,6 +173,8 @@ def main():
     hasNetwork = initNetwork(secrets.SSID, secrets.PASS)
     spi = initSPI()
     display = initDisplay(spi)
+    wri = Writer(display, freesans20, verbose=False)
+    wris = Writer(display, font6, verbose=False)
     if hasNetwork:
         mqtt_client = initMQTT()
         ntptime.settime()
@@ -173,7 +183,8 @@ def main():
     adc = initADC()
     batt_lvl = readBatteryLevel(adc)
     display.fill(0)
-    display.text('Weather 1.0', 0, 0, 1)
+    wris.set_textpos(display, 0, 0)
+    wris.printstring('Weather 1.0')
     if hasNetwork:
         display.text('WiFi', 0, 48, 1)
     if mqtt_client is not None:
@@ -212,14 +223,24 @@ def main():
 #            display.fill_rect(0, 0, 127, 16, 0)
         display.fill(0)
         display.text(m_selected_device, 0, 0, 1)
-        if (temp is not None):
-            display.text(temp, 8, 16, 1)
-        if (humi is not None):
-            display.text(humi, 64, 16, 1)
-        if (pres is not None):
-            display.text(pres, 8, 32, 1)
-        if (lux is not None):
-            display.text(lux, 64, 32, 1)
+        if (config.STYLE == 0):
+            if (temp is not None):
+                display.text(temp, 8, 16, 1)
+            if (humi is not None):
+                display.text(humi, 64, 16, 1)
+            if (pres is not None):
+                display.text(pres, 8,32, 1)
+            if (lux is not None):
+                display.text(lux, 64, 32, 1)
+        else:
+            row = 22
+            if (temp is not None):
+                wri.set_textpos(display, col = 0, row = row)
+                wri.printstring(temp)
+            if (humi is not None):
+                wri.set_textpos(display, col = config.DISPLAY_WIDTH - wri.stringlen(humi), row = row)
+                wri.printstring(humi)
+
         if batt_lvl != 0:
             batt_lvl = round((readBatteryLevel(adc)*140/512 + batt_lvl)/2)
         else:
