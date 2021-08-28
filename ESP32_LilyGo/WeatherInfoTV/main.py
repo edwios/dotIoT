@@ -7,8 +7,8 @@ import config
 import ujson
 import ntptime
 from writer import Writer
-import freesans20
-import font6
+import largefont
+import font6 as smallfont
 
 DEBUG=False
 
@@ -159,7 +159,7 @@ def print_status(display, hasnet, hasmqtt, hasupdate, batt_lvl):
     display.text(m_selected_device, 0, 0, 1)
     display.fill_rect(0,48,127,16,0)
     display.text(batts, 0, 48, 1)
-    wris = Writer(display, font6, verbose=False)
+    wris = Writer(display, smallfont, verbose=False)
     wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(datetime), row = 0)
     wris.printstring(datetime)
     wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(status), row = 48)
@@ -173,8 +173,8 @@ def main():
     hasNetwork = initNetwork(secrets.SSID, secrets.PASS)
     spi = initSPI()
     display = initDisplay(spi)
-    wri = Writer(display, freesans20, verbose=False)
-    wris = Writer(display, font6, verbose=False)
+    wri = Writer(display, largefont, verbose=False)
+    wris = Writer(display, smallfont, verbose=False)
     if hasNetwork:
         mqtt_client = initMQTT()
         ntptime.settime()
@@ -233,13 +233,13 @@ def main():
             if (lux is not None):
                 display.text(lux, 64, 32, 1)
         else:
-            row = 22
+            row = 20
             if (temp is not None):
                 wri.set_textpos(display, col = 0, row = row)
-                wri.printstring(temp)
+                wri.printstring(str(temp)+' c')
             if (humi is not None):
-                wri.set_textpos(display, col = config.DISPLAY_WIDTH - wri.stringlen(humi), row = row)
-                wri.printstring(humi)
+                wri.set_textpos(display, col = config.DISPLAY_WIDTH - wri.stringlen('{:s}%'.format(humi)), row = row)
+                wri.printstring('{:s}%'.format(humi))
 
         if batt_lvl != 0:
             batt_lvl = round((readBatteryLevel(adc)*140/512 + batt_lvl)/2)
