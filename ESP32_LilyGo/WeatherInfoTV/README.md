@@ -13,14 +13,14 @@ Zekton from Ray Larabie, used as the big digits
 
 Aadhunik from Hareesh Seera, used for the room names
 
-FreeSans, used in time and relative humidity numbers
+Jura-Medium for other smaller size fonts
 
 ## Changes
 
 To display the degree symbol (º), the double quote symbol in `largedigits.py` was hacked to facilitate this. Therefore, use " and it will display as a º
 
 
-### Install
+## Install
 
 Install [micropython](https://micropython.org/download/esp32/) on the LilyGo TTV.
 
@@ -37,4 +37,9 @@ Copy all files to the LilyGo TTV using for example, `rshell` or `ampy`
 Alternatively, use `mpy-cross` to complile everything except `main.py`, then copy the `main.py` and all `.mpy` files to the LiliGo TTV.
 
 
+## Uses
+
+Long touch to switch between Weather info and Clock display.
+
+Short touch to switch between different rooms
 
