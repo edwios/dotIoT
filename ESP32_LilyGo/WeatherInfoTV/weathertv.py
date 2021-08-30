@@ -1,24 +1,25 @@
 import time
 from umqtt.robust import MQTTClient
 import secrets
-from machine import Pin, SoftSPI, ADC, RTC
+from machine import Pin, SoftSPI, ADC, RTC, Timer
 import ssd1306
 import config
 import ujson
 import ntptime
 from writer import Writer
 import largedigits
-import font6 as smallfont
+import smallfont
 import tinyfont
 
 DEBUG=False
+CLOCKMODE=False
 
 m_all_devices = []
 m_selected_device = None
 m_selected_device_idx = 0
 m_env_data = {}
 m_has_update = False
-
+m_tim0 = None
 
 def initNetwork(ssid, pwd):
     """Connect to Wi-Fi network with 10s timeout"""
@@ -39,7 +40,7 @@ def initNetwork(ssid, pwd):
         else:
             # if DEBUG: print("Connected to Wi-Fi")
             WiFi_connected = True
-        if WiFi_connected and DEBUG: print('Wi-Fi connected, network config:', sta_if.ifconfig())
+        #if WiFi_connected and DEBUG: print('Wi-Fi connected, network config:', sta_if.ifconfig())
         return WiFi_connected
     return True
 
@@ -85,7 +86,6 @@ def sub_cb(topic, msg):
     device_name = None
     try:
         device_name = jobj['device_name']
-        print(device_name)
     except:
         pass
     temp = None
@@ -111,7 +111,7 @@ def initMQTT():
     bTopic = bytes(topic, 'UTF-8')
     c = MQTTClient(config.MQTT_CLIENT_ID, config.MQTT_SERVER, user=secrets.MQTT_USER, password=secrets.MQTT_PASS)
     # Print diagnostic messages when retries/reconnects happens
-    c.DEBUG = True
+    c.DEBUG = False
     c.set_callback(sub_cb)
     # Connect to server, requesting not to clean session for this
     # client. If there was no existing session (False return value
@@ -135,45 +135,97 @@ def initMQTT():
     # approaches, where initial setup of session is done by application,
     # but if anything goes wrong, there's an external tool to clean session.
     if not c.connect(clean_session=True):
-        print("New session being set up %s" % topic)
         c.subscribe(bTopic)
-    else:
-        print("Session already exist")
     return c
 
 
 def print_status(display, hasnet, hasmqtt, hasupdate, batt_lvl):
+    global CLOCKMODE
     rtc = RTC()
     status = ' '
     if hasupdate:
-        status = '*'
+        status = '+'
     if not hasnet:
         status = 'WiFi %s' % status
     if not hasmqtt:
         status = 'MQTT %s' % status
     (Y, M, D, h, m, s, W, ms) = time.localtime(time.mktime(time.localtime())+7200)
     datetime = '{:02d}:{:02d}'.format(h, m)
-    batts = '%d%%' % (batt_lvl)
-    if len(m_all_devices) > 0:
-        display.fill_rect(0,0,127,16,0)
-        if config.STYLE == 0:
-            display.text(m_all_devices[m_selected_device_idx], 0, 0, 1)
-        elif config.STYLE == 1:
-            wris = Writer(display, tinyfont, verbose=False)
-            wris.set_textpos(display, 0, 0)
-            wris.printstring(m_all_devices[m_selected_device_idx].upper()[:10])
-    display.fill_rect(0,48,127,16,0)
-    display.text(batts, 0, 48, 1)
     wris = Writer(display, smallfont, verbose=False)
-    wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(datetime), row = 0)
-    wris.printstring(datetime)
-    wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(status), row = 48)
-    wris.printstring(status)
+    batts = '%d%%' % (batt_lvl)
+    # Print heading and clock at top
+    if not CLOCKMODE:
+        if len(m_all_devices) > 0:
+            display.fill_rect(0,0,127,16,0)
+            if config.STYLE == 0:
+                display.text(m_all_devices[m_selected_device_idx], 0, 0, 1)
+            elif config.STYLE == 1:
+                wris = Writer(display, tinyfont, verbose=False)
+                wris.set_textpos(display, 0, 0)
+                wris.printstring(m_all_devices[m_selected_device_idx].upper()[:10])
+        wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(datetime), row = 0)
+        wris.printstring(datetime)
+        display.hline(0,20,128,1)
+    # Print status line at the bottom
+    #display.text(batts, 0, 48, 1)
+    if CLOCKMODE:
+        # Draw battery at URC
+        display.rect(124,4,2,4,1)
+        display.rect(110,2,14,8,1)
+        display.rect(124,5,1,2,0)
+        display.fill_rect(112,4,int(batt_lvl/10),4,1)
+        display.fill_rect(0,0,16,16,0)
+        wris.set_textpos(display, 0,0)
+        wris.printstring(status)
+    else:
+        # Draw battery at LLC
+        display.fill_rect(0,47,127,16,0)
+        display.rect(16,56,2,4,1)
+        display.rect(2,54,14,8,1)
+        display.rect(16,57,1,2,0)
+        display.fill_rect(4,56,int(batt_lvl/10),4,1)
+        wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(status) - 2, row = 46)
+        wris.printstring(status)
     display.show()
 
 
+def print_clock(display, bignums, smallchars):
+    Months = {}
+    Weeks = {}
+    lg = config.LANG
+    Months.update({'en' : ['','Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']})
+    Weeks.update({'en' : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']})
+    Months.update({'sv' : ['','Jan', 'Feb', 'Mar', 'Apr', 'Maj', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dec']})
+    Weeks.update({'sv' : ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön']})
+    # Let's clear the screen
+    display.fill(0)
+    (Y, M, D, h, m, s, W, ms) = time.localtime(time.mktime(time.localtime())+7200)
+    thehour = '{:02d}'.format(h)
+    themin = '{:02d}'.format(m)
+    thedate = '{:s} {:d}'.format(Months[lg][M], D)
+    theweek = Weeks[lg][W]
+    bignums.set_textpos(display, col = int(62 - bignums.stringlen(thehour)), row = 6)
+    bignums.printstring(thehour)
+    bignums.set_textpos(display, col = 62, row = 6)
+    bignums.printstring(':')
+    bignums.set_textpos(display, col = 68, row = 6)
+    bignums.printstring(themin)
+    smallchars.set_textpos(display, col = int((config.DISPLAY_WIDTH/2 - smallchars.stringlen(theweek))/2), row = 42)
+    smallchars.printstring(theweek)
+    smallchars.set_textpos(display, col = int((config.DISPLAY_WIDTH - smallchars.stringlen(thedate) + config.DISPLAY_WIDTH/2)/2), row = 42)
+    smallchars.printstring(thedate)
+
+
+def set_clockMode():
+    global CLOCKMODE, m_tim0
+    CLOCKMODE=True
+    m_tim0.deinit()
+    m_tim0 = None
+
+
 def main():
-    global m_selected_device, m_selected_device_idx, m_all_devices, m_env_data, m_has_update
+    global m_selected_device, m_selected_device_idx, m_all_devices, m_env_data, m_has_update, m_tim0
+    global CLOCKMODE
     mqtt_client = None
     hasNetwork = initNetwork(secrets.SSID, secrets.PASS)
     spi = initSPI()
@@ -198,6 +250,8 @@ def main():
     time.sleep(2)
     was_touched = False
     virgin = True
+    touch_start_time = 0
+    m_tim0 = None
     while 1:
         mc = False
         if mqtt_client is not None:
@@ -210,46 +264,80 @@ def main():
         time.sleep_ms(50)
         # We only act when finger lifted
         touched = (touch.value() == 1)
+        if (touched and not was_touched):
+            touch_start_time = time.time()
         released = (not touched and was_touched)
         was_touched = touched
+        if not released and touched:
+            if (touch_start_time > 0) and ((time.time() - touch_start_time) > 3):
+                # Hold for 5 seconds, a long touch
+                if not CLOCKMODE:
+                    touch_start_time = 0
+                    CLOCKMODE = True
+                else:
+                    CLOCKMODE = False
+                    touch_start_time = 0
+                    virgin = True
+                    if m_tim0 is not None:
+                        m_tim0.deinit()
+                        m_tim0 = None
+        elif released and ((time.time() - touch_start_time) <= 3) and CLOCKMODE:
+            if CLOCKMODE:
+                touch_start_time = 0
+                m_tim0 = Timer(0)
+                m_tim0.init(period=2000, mode=Timer.ONE_SHOT, callback=lambda t:set_clockMode())
+                virgin = True
+            CLOCKMODE = False
         # We are done, SPI again
         spi = initSPI()
-        if (released or virgin):
+        if (released or virgin) and not CLOCKMODE:
+            if m_tim0 is not None:
+                m_tim0.deinit()
+                m_tim0 = Timer(0)
+                m_tim0.init(period=2000, mode=Timer.ONE_SHOT, callback=lambda t:set_clockMode())
             if len(m_all_devices) > 0:
                 if not virgin:
                     # First touch will not move pointer forward
                     m_selected_device_idx = m_selected_device_idx + 1
                     if m_selected_device_idx >= len(m_all_devices):
                         m_selected_device_idx = 0
-                virgin = False  # Touched, no longer virgin
+                    m_has_update = False
+                if released:
+                    virgin = False  # Touched, no longer virgin
                 m_selected_device = m_all_devices[m_selected_device_idx]
-                m_has_update = False
         (temp, humi, pres, lux) = m_env_data[m_selected_device]
 #            display.fill_rect(0, 0, 127, 16, 0)
-        display.fill(0)
-        display.text(m_selected_device, 0, 0, 1)
-        if (config.STYLE == 0):
-            if (temp is not None):
-                display.text(temp, 8, 16, 1)
-            if (humi is not None):
-                display.text(humi, 64, 16, 1)
-            if (pres is not None):
-                display.text(pres, 8,32, 1)
-            if (lux is not None):
-                display.text(lux, 64, 32, 1)
+        if not CLOCKMODE:
+            display.fill(0)
+#            display.text(m_selected_device, 0, 0, 1)
+            if (config.STYLE == 0):
+                if (temp is not None):
+                    display.text(temp, 8, 16, 1)
+                if (humi is not None):
+                    display.text(humi, 64, 16, 1)
+                if (pres is not None):
+                    display.text(pres, 8,32, 1)
+                if (lux is not None):
+                    display.text(lux, 64, 32, 1)
+            else:
+                row = 24
+                if (temp is not None):
+                    bignum.set_textpos(display, col = 0, row = row)
+                    bignum.printstring(str(temp)+'"c')
+                if (humi is not None):
+                    wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen('{:s}%'.format(humi)), row = row+10)
+                    wris.printstring('{:s}%'.format(humi))
         else:
-            row = 20
-            if (temp is not None):
-                bignum.set_textpos(display, col = 0, row = row)
-                bignum.printstring(str(temp)+'"c')
-            if (humi is not None):
-                wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen('{:s}%'.format(humi)), row = row+10)
-                wris.printstring('{:s}%'.format(humi))
+            print_clock(display, bignum, wris)
 
         if batt_lvl != 0:
-            batt_lvl = round((readBatteryLevel(adc)*140/512 + batt_lvl)/2)
+            batt_lvl = (round((readBatteryLevel(adc)*140/512 + batt_lvl*2)/2) - 50) * 2
         else:
-            batt_lvl = round(readBatteryLevel(adc)*140/512)
+            batt_lvl = (round(readBatteryLevel(adc)*140/512) - 50) * 2
+        if batt_lvl < 0:
+            batt_lvl = 0
+        elif batt_lvl > 100:
+            batt_lvl = 100
         print_status(display, hasNetwork, mqtt_client is not None, m_has_update, batt_lvl)
 
     if mqtt_client is not None:
