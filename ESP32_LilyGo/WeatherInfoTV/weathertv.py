@@ -152,7 +152,12 @@ def print_status(display, hasnet, hasmqtt, hasupdate, batt_lvl):
     (Y, M, D, h, m, s, W, ms) = time.localtime(time.mktime(time.localtime())+7200)
     datetime = '{:02d}:{:02d}'.format(h, m)
     wris = Writer(display, smallfont, verbose=False)
-    batts = '%d%%' % (batt_lvl)
+    batt = round((batt_lvl - 218)*100/(300-218))
+    if batt < 0:
+        batt = 0
+    if batt > 100:
+        batt=100
+    batt_lvl = str(batt_lvl)
     # Print heading and clock at top
     if not CLOCKMODE:
         if len(m_all_devices) > 0:
@@ -173,7 +178,7 @@ def print_status(display, hasnet, hasmqtt, hasupdate, batt_lvl):
         display.rect(124,4,2,4,1)
         display.rect(110,2,14,8,1)
         display.rect(124,5,1,2,0)
-        display.fill_rect(112,4,int(batt_lvl/10),4,1)
+        display.fill_rect(112,4,int(batt/10),4,1)
         display.fill_rect(0,0,16,16,0)
         wris.set_textpos(display, 0,0)
         wris.printstring(status)
@@ -183,7 +188,7 @@ def print_status(display, hasnet, hasmqtt, hasupdate, batt_lvl):
         display.rect(16,56,2,4,1)
         display.rect(2,54,14,8,1)
         display.rect(16,57,1,2,0)
-        display.fill_rect(4,56,int(batt_lvl/10),4,1)
+        display.fill_rect(4,56,int(batt/10),4,1)
         wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(status) - 2, row = 46)
         wris.printstring(status)
     display.show()
@@ -329,15 +334,7 @@ def main():
                     wris.printstring('{:s}%'.format(humi))
         else:
             print_clock(display, bignum, wris)
-
-        if batt_lvl != 0:
-            batt_lvl = (round((readBatteryLevel(adc)*140/512 + batt_lvl*2)/2) - 50) * 2
-        else:
-            batt_lvl = (round(readBatteryLevel(adc)*140/512) - 50) * 2
-        if batt_lvl < 0:
-            batt_lvl = 0
-        elif batt_lvl > 100:
-            batt_lvl = 100
+        batt_lvl = readBatteryLevel(adc)
         print_status(display, hasNetwork, mqtt_client is not None, m_has_update, batt_lvl)
 
     if mqtt_client is not None:
