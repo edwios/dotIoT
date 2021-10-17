@@ -10,6 +10,7 @@ from writer import Writer
 import largedigits
 import smallfont
 import tinyfont
+import tinyfontcond
 
 DEBUG=False
 CLOCKMODE=False
@@ -20,6 +21,12 @@ m_selected_device_idx = 0
 m_env_data = {}
 m_has_update = False
 m_tim0 = None
+
+
+"""
+Initialisers
+================================
+"""
 
 def initNetwork(ssid, pwd):
     """Connect to Wi-Fi network with 10s timeout"""
@@ -75,37 +82,6 @@ def initADC():
     return adc
 
 
-def readBatteryLevel(adc):
-    adc.atten(ADC.ATTN_11DB)
-    adc.width(ADC.WIDTH_9BIT)
-    return adc.read()
-
-def sub_cb(topic, msg):
-    global m_env_data, m_selected_device, m_all_devices, m_has_update
-    jobj = ujson.loads(str(msg, 'UTF-8'))
-    device_name = None
-    try:
-        device_name = jobj['device_name']
-    except:
-        pass
-    temp = None
-    humi = None
-    pres = None
-    lux = None
-    if device_name is not None:
-        if device_name not in m_all_devices:
-            m_all_devices.append(device_name)
-        try:
-            temp = str(round(jobj['readings']['temperature'], 1))
-            humi = str(round(jobj['readings']['humidity']))
-            pres = str(round(jobj['readings']['pressure']))
-            lux  = str(round(jobj['readings']['lux']))
-        except:
-            pass
-        m_env_data.update({device_name: (temp, humi, pres, lux)})
-        m_has_update = True
-
-
 def initMQTT():
     topic = config.MQTT_TOPIC
     bTopic = bytes(topic, 'UTF-8')
@@ -139,6 +115,56 @@ def initMQTT():
     return c
 
 
+"""
+Call backs
+================================
+"""
+
+"""
+Timer callback
+"""
+def set_clockMode():
+    global CLOCKMODE, m_tim0
+    CLOCKMODE=True
+    m_tim0.deinit()
+    m_tim0 = None
+
+
+"""
+MQTT callback
+"""
+def sub_cb(topic, msg):
+    global m_env_data, m_selected_device, m_all_devices, m_has_update
+    jobj = ujson.loads(str(msg, 'UTF-8'))
+    device_name = None
+    try:
+        device_name = translate('sv',jobj['device_name'])
+    except:
+        pass
+    temp = None
+    humi = None
+    pres = None
+    lux = None
+    if device_name is not None:
+        if device_name not in m_all_devices:
+            m_all_devices.append(device_name)
+        try:
+            temp = str(round(jobj['readings']['temperature'], 1))
+            humi = str(round(jobj['readings']['humidity']))
+            pres = str(round(jobj['readings']['pressure']))
+            lux  = str(round(jobj['readings']['lux']))
+        except:
+            pass
+        m_env_data.update({device_name: (temp, humi, pres, lux)})
+        m_has_update = True
+
+
+
+"""
+Output
+================================
+"""
+
 def print_status(display, hasnet, hasmqtt, hasupdate, batt_lvl):
     global CLOCKMODE
     rtc = RTC()
@@ -166,8 +192,11 @@ def print_status(display, hasnet, hasmqtt, hasupdate, batt_lvl):
                 display.text(m_all_devices[m_selected_device_idx], 0, 0, 1)
             elif config.STYLE == 1:
                 wris = Writer(display, tinyfont, verbose=False)
+                devname = m_all_devices[m_selected_device_idx].upper()[:12]
+                if wris.stringlen(devname) > config.DISPLAY_WIDTH - 34:
+                    wris = Writer(display, tinyfontcond, verbose=False)
                 wris.set_textpos(display, 0, 0)
-                wris.printstring(m_all_devices[m_selected_device_idx].upper()[:10])
+                wris.printstring(devname)
         wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(datetime), row = 0)
         wris.printstring(datetime)
         display.hline(0,20,128,1)
@@ -215,18 +244,44 @@ def print_clock(display, bignums, smallchars):
     bignums.printstring(':')
     bignums.set_textpos(display, col = 68, row = 6)
     bignums.printstring(themin)
+    smallchars.set_textpos(display, col = 0, row = 42)
+    smallchars.printstring('{:s} {:s}'.format(theweek, thedate))
+    """
     smallchars.set_textpos(display, col = int((config.DISPLAY_WIDTH/2 - smallchars.stringlen(theweek))/2), row = 42)
     smallchars.printstring(theweek)
     smallchars.set_textpos(display, col = int((config.DISPLAY_WIDTH - smallchars.stringlen(thedate) + config.DISPLAY_WIDTH/2)/2), row = 42)
     smallchars.printstring(thedate)
+    """
 
 
-def set_clockMode():
-    global CLOCKMODE, m_tim0
-    CLOCKMODE=True
-    m_tim0.deinit()
-    m_tim0 = None
+"""
+Utilties
+================================
+"""
 
+def readBatteryLevel(adc):
+    adc.atten(ADC.ATTN_11DB)
+    adc.width(ADC.WIDTH_9BIT)
+    return adc.read()
+
+
+def translate(lang, word):
+    if lang is None or word is None:
+        return None
+    if lang == 'en':
+        return word
+    dictionary = {}
+    dictionary['sv'] = {"studyroom":"studierum", "hallway":"korridor", "livingroom":"vardagsrum", "masterbedroom":"huvudsovrum", "outdoor":"utanför"}
+    if lang == 'sv':
+        return(dictionary[lang][word.lower()])
+    else:
+        return word
+
+
+"""
+Main
+================================
+"""
 
 def main():
     global m_selected_device, m_selected_device_idx, m_all_devices, m_env_data, m_has_update, m_tim0
@@ -237,6 +292,7 @@ def main():
     display = initDisplay(spi)
     bignum = Writer(display, largedigits, verbose=False)
     wris = Writer(display, smallfont, verbose=False)
+    wrisc = Writer(display, tinyfont, verbose=False)
     if hasNetwork:
         mqtt_client = initMQTT()
         ntptime.settime()
@@ -334,6 +390,12 @@ def main():
                     wris.printstring('{:s}%'.format(humi))
         else:
             print_clock(display, bignum, wris)
+            if temp is not None:
+                temp = '{:d}'.format(round(float(temp)))
+                wris.set_textpos(display, col = config.DISPLAY_WIDTH - wris.stringlen(temp), row = 42)
+                wris.printstring(temp)
+
+
         batt_lvl = readBatteryLevel(adc)
         print_status(display, hasNetwork, mqtt_client is not None, m_has_update, batt_lvl)
 
