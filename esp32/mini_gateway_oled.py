@@ -11,8 +11,8 @@ import secrets
 if USEOLED:
     import config_oled as config
     from writer import Writer
-    import nunito_r
-    import ostrich_r
+    # import nunito_r
+    # import ostrich_r
     import font6
     import ssd1306
 else:
@@ -72,7 +72,7 @@ m_WiFi_connected = False
 key1 = None
 m_client = None
 m_devices = None
-m_expectedCallback = 0
+m_expectedCallback = []
 m_systemstatus = 0
 m_cbreplies = []
 m_lt = 0
@@ -107,6 +107,9 @@ m_rastrooffsets1 = ["-", "+"]
 m_rdevactions = ["off", "on", "scene"]
 m_ralarmtypes = ["day", "week"]
 
+m_c1 = ''
+m_c2 = ''
+
 
 def do_connect(ssid, pwd):
     """Connect to Wi-Fi network with 10s timeout"""
@@ -122,11 +125,11 @@ def do_connect(ssid, pwd):
             pass
         if (time.time() >= lastTime + 10):
             WiFi_connected = False
-            print("Error: timeout connecting to WLAN %s" % ssid)
+            print("Error: No Wifi")
         else:
             # if DEBUG: print("Connected to Wi-Fi")
             WiFi_connected = True
-        if WiFi_connected and DEBUG: print('Wi-Fi connected, network config:', sta_if.ifconfig())
+#        if WiFi_connected and DEBUG: print('Wi-Fi connected, network config:', sta_if.ifconfig())
         return WiFi_connected
     return True
 
@@ -150,7 +153,7 @@ def initMQTT():
     """Initialise MQTT client and connect to the MQTT broker. """
     global m_client
     if not m_client:
-        print("ERROR: No MQTT connection to init for")
+#        print("ERROR: No MQTT connection to init for")
         return False
     m_client.set_callback(on_message)  # Specify on_message callback
     try:
@@ -490,10 +493,9 @@ def check_callbacks():
                     process_callback(devaddr, callback)
 
 
-s1 = ''
-s2 = ''
 def process_callback(devaddr, callback):
     global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG, s1, s2, m_expectedCallback
+    global m_c1, m_c2
     s1 = ''
     s2 = ''
     gc.collect()
@@ -516,7 +518,8 @@ def process_callback(devaddr, callback):
     if len(data) == 0:
         return
     opcode = data[0]
-    print_results('{:s},{:02X}'.format(name[:16], opcode), None)
+    if m_c1 == '' and m_c2 == '':
+        print_results('{:s},{:02X}'.format(name[:16], opcode), None)
     mesg.update({"device_name":name, "device_id":devaddr})
     if opcode == 0xDC:
         # Status notify report
@@ -726,16 +729,22 @@ def process_callback(devaddr, callback):
                 mesg.update({"type":"electricity", "voltage":{"value":voltage, "unit":"V"}, "current":{"value":current, "unit":"A"}})
                 s1 = '{:d}V'.format(voltage)
                 s2 = '{:d}A'.format(current)
-    elif (m_expectedCallback > 0) and (opcode == m_expectedCallback):
-    #    if DEBUG: print("Call back subcommand: %02X" % opcode)
-    #    if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
+    elif (len(m_expectedCallback) > 0) and (opcode == m_expectedCallback[0]):
+        if DEBUG: print("Call back subcommand: %02X" % opcode)
+        if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
         mesg.update({"opcode":'{:02X}'.format(opcode), "pars":callback[2:26], "type":"callback"})
-        s1 = 'Bad op:{:02X}'.format(opcode)
+        m_c1 = 'op:{:02X}'.format(opcode)
+        m_c2 = callback[2:16]
     else:
-    #    if DEBUG: print("Unsupported call back opcode %02X" % opcode)
-        return
-    mesg.update({"timestamp":str(time.time())})
-    update_status_mqtt(mesg)
+        if DEBUG: print("Unsupported call back opcode %02X with pars [%s]" % (opcode, callback[2:26]))
+        m_c1 = 'op:{:02X}'.format(opcode)
+        m_c2 = callback[2:16]
+        mesg = {}
+    if len(mesg) > 0:
+        mesg.update({"timestamp":str(time.time())})
+        update_status_mqtt(mesg)
+    if m_c1 != '' or m_c2 != '':
+        print_results(m_c1, m_c2)
     if s1 != '' or s2 != '':
         print_results(s1, s2)
     gc.collect()
@@ -798,7 +807,7 @@ def process_command(mqttcmd):
                     Hall light/off
                     Table lamp/dim:25
     """
-    global DEBUG, Meshname, Meshpass, m_expectedCallback
+    global DEBUG, Meshname, Meshpass, m_expectedCallback, m_c1, m_c2
 #    if DEBUG: print("Process command %s" % mqttcmd)
     print_progress(mqttcmd[:16])
     if mqttcmd is not '':
@@ -813,6 +822,10 @@ def process_command(mqttcmd):
                 return
             elif (mqttcmd == "refresh"):
                 setMeshParams(name=Meshname, pwd=Meshpass)
+                return
+            elif (mqttcmd == "clear"):
+                m_c1 = ''
+                m_c2 = ''
                 return
             else:
                 return
@@ -895,6 +908,12 @@ def process_command(mqttcmd):
             elif (hcmd == "get_status"):
                 cmd(did, 0xda, [0x10])
                 m_expectedCallback = [0xdb, 0x00]
+            elif (hcmd == "get_countdown"):
+                cmd(did, 0xea, [0x10, 0x80])
+                m_expectedCallback = [did, 0xeb, 0x01]
+            elif (hcmd == "get_config"):
+                cmd(did, 0xea, [0x8d])
+                m_expectedCallback = [did, 0xeb, 0x01]
             elif (hcmd == "get_timer"):
                 if (hexdata != ''):
                     try:
@@ -930,7 +949,7 @@ def process_command(mqttcmd):
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xee, [0x00] + list(data))
-                        m_expectedCallback = 0
+                        m_expectedCallback = []
             elif (hcmd == "set_time"):
                 if (hexdata == '' or hexdata == 'now'):
                     (yyyy,mo,dd,hh,mm,ss,_,_) = time.localtime()
@@ -939,7 +958,7 @@ def process_command(mqttcmd):
                     try:
                         (yyyy,mo,dd,hh,mm,ss) = hexdata.split(',')
                     except:
-                        print("ERROR: invalid parameters, yyyy,mo,dd,hh,mm,ss")
+#                        print("ERROR: invalid parameters, yyyy,mo,dd,hh,mm,ss")
                         return
                 settimeStr(did, yyyy,mo,dd,hh,mm,ss)
             elif (hcmd == "set_dst"):
@@ -948,9 +967,69 @@ def process_command(mqttcmd):
                     try:
                         (bmm, bdd, emm, edd, ofs, ena) = hexdata.split(',')
                     except:
-                        print("ERROR: invalid parameters, Bmm,Bdd,Emm,Edd,Offset (int),Enabled (0|1)")
+                        pass
+#                        print("ERROR: invalid parameters, Bmm,Bdd,Emm,Edd,Offset (int),Enabled (0|1)")
                     else:
                         setdst(did, bmm, bdd, emm, edd, ofs, ena)
+            elif (hcmd == "set_countdown"):
+                # Set Countdown F5 11 02 06 HH MM
+                if (hexdata != ''):
+                    try:
+                        i = int(hexdata)
+                    except:
+                        i = 1
+                    if i == 0:
+                        # 0 means disable countdown
+                        cmd(did, 0xf5, [0x07, 0x00])
+                    else:
+                        hh = i // 60
+                        mm = i % 60
+                        cmd(did, 0xf5, [0x06, hh, mm])
+                        time.sleep(0.1)
+                        cmd(did, 0xf5, [0x07, 0x01])
+                    m_expectedCallback = None
+            elif (hcmd == "set_group"):
+                # Set Countdown D7 11 02 01 LL HH
+                if (hexdata != ''):
+                    try:
+                        if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
+                            i = int(hexdata, 16)
+                        else:
+                            i = int(hexdata)
+                    except:
+                        i = 0x8001
+                    data = i.to_bytes(2, 'little')
+                    cmd(did, 0xD7, [0x01] + list(data))
+                    m_expectedCallback = None
+            elif (hcmd == "del_group"):
+                # Del group D7 11 02 00 LL HH
+                if (hexdata != ''):
+                    try:
+                        if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
+                            i = int(hexdata, 16)
+                        else:
+                            i = int(hexdata)
+                    except:
+                        i = 0x8001
+                    data = i.to_bytes(2, 'little')
+                    cmd(did, 0xD7, [0x00] + list(data))
+                    m_expectedCallback = None
+            elif (hcmd == "set_remote"):
+                # Set remote F6 11 02 LL HH
+                if (hexdata != ''):
+                    try:
+                        if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
+                            i = int(hexdata, 16)
+                        else:
+                            i = int(hexdata)
+                    except:
+                        i = 0x8001
+                    data = i.to_bytes(2, 'little')
+                    cmd(did, 0xF6, list(data))
+                    m_expectedCallback = None
+            elif (hcmd == "power"):
+                cmd(did, 0xC0, [0x08, 0xE1])
+                m_expectedCallback = None
             elif (hcmd == 'raw'):
                 if hexdata != '':
                     hexlist = list(hexdata[i:i+2] for i in range(0, len(hexdata), 2))
@@ -958,14 +1037,14 @@ def process_command(mqttcmd):
                         t = ubinascii.unhexlify(hexlist[0])
                         c = int(t[0])
                     except:
-                        print("ERROR: Illegal op code in raw %s" % hexlist[0])
+#                        print("ERROR: Illegal op code in raw %s" % hexlist[0])
                         return
                     try:
                         t = ubinascii.unhexlify(hexlist[1])
-                        m_expectedCallback = int(t[0])
+                        m_expectedCallback = [int(t[0])]
                     except:
-                        print("ERROR: Illegal callback in raw %s" % hexlist[1])
-                        m_expectedCallback = 0
+#                        print("ERROR: Illegal callback in raw %s" % hexlist[1])
+                        m_expectedCallback = []
                     parsstr = hexlist[2:]
                     pars = []
                     for par in parsstr:
@@ -1051,23 +1130,23 @@ def process_hass(topic, msg):
     ts = topic.split('/')
     if ts is None:
         # We don't handle topics without '/'
-        print("ERROR: process_hass(): Topic has no '/'")
+#        print("ERROR: process_hass(): Topic has no '/'")
         return
     if ts[-1:][0] != 'set':
         # We don't handle here non-set topics
-        print("ERROR: process_hass(): Topic is not ended with 'set' (%s)" % ts[-1:][0])
+#        print("ERROR: process_hass(): Topic is not ended with 'set' (%s)" % ts[-1:][0])
         return
     device_name = ts[-2:][0]
     if device_name == '' or device_name == 'hass':
         # Missing device name, we don't handle either
-        print("ERROR: process_hass(): Topic does not contain device name (%s)" % device_name)
+#        print("ERROR: process_hass(): Topic does not contain device name (%s)" % device_name)
         return
     if device_name is not None:
         # if DEBUG: print("HASS control of device %s" % device_name)
         try:
             mqtt_json = json.loads(msg)
         except:
-            print("ERROR: JSON format error")
+#            print("ERROR: JSON format error")
             return
         try:
             state = mqtt_json['state']
@@ -1110,7 +1189,7 @@ def process_hass(topic, msg):
                 except:
                     i = 5
                 if (i > 100 or i < 0):
-                    print("ERROR: Lumnance value must be between 0 and 100")
+                    print("Lum err")
                 else:
                     data = i.to_bytes(1, 'big')
                     cmd(did, 0xd2, list(data))
@@ -1129,7 +1208,7 @@ def process_hass(topic, msg):
                         ct = 100 - ct
                     # We've got Kelvin
                     elif (i < 1800 or i > 6500):
-                        print("ERROR: CCT value must be between 1800K and 6500K")
+#                        print("ERROR: CCT value must be between 1800K and 6500K")
                         return
                     else:
                         ct = int(100 * (i - 2700)/3800)
@@ -1154,16 +1233,16 @@ def process_hass(topic, msg):
                     g = int(cg)
                     b = int(cb)
                 except:
-                    print("ERROR: Malformed RGB colour in JSON")
+#                    print("ERROR: Malformed RGB colour in JSON")
                     return
                 if (r > 255) or (g > 255) or (b > 255) or (r < 0) or (g < 0) or (b < 0):
-                    print("ERROR: RGB colour values outside of 0..255")
+#                    print("ERROR: RGB colour values outside of 0..255")
                     return
                 hexdata = '{:02X}'.format(r) + '{:02X}'.format(g) + '{:02X}'.format(b)
                 if hexdata != '':
                     i = int(hexdata, 16)
                     if (i > 0xFFFFFF):
-                        print("ERROR: RGB value must be 3 bytes")
+#                        print("ERROR: RGB value must be 3 bytes")
                         return
                     else:
                         data = i.to_bytes(3, 'big')
@@ -1207,7 +1286,7 @@ def process_config(conf):
     try:
         config = ujson.loads(conf)
     except:
-        print("ERROR: Improper json in config")
+#        print("ERROR: Improper json in config")
         return False
     try:
         mn = config['space']['meshNetworkName']
@@ -1333,7 +1412,9 @@ def print_results(msg1, msg2):
 
 
 def print_progress(msg):
-    print_results(msg, None)
+    global m_c1, m_c2
+    if m_c1 == '' and m_c2 == '':
+        print_results(msg, None)
     return
 '''
     global wri_m
@@ -1472,7 +1553,8 @@ print_progress("Starting up")
 try:
     os.mkdir(CACHEDIR)
 except:
-    print("WARNING: Cannot create dir %s" % CACHEDIR)
+    pass
+#    print("WARNING: Cannot create dir %s" % CACHEDIR)
 
 m_meshsecrets = retrieveMeshSecrets(DEFAULT_MESHNAME, DEFAULT_MESHPWD, Mesh_Secrets)
 Meshname = m_meshsecrets['meshname']
@@ -1496,10 +1578,10 @@ poll = select.poll()
 poll.register(m_uart, select.POLLIN)
 
 if not checkBLEModule():
-    print("ERROR: Cannot find BLE module!")
+#    print("ERROR: Cannot find BLE module!")
     blemodu_error(1)
 else:
-    print("Found BLE module")
+#    print("Found BLE module")
     blemodu_error(0)
     
 
@@ -1527,7 +1609,7 @@ while True:
         m_WiFi_connected = do_connect(SSID, PASS)
         if not m_WiFi_connected:
             wifi_error(1)
-            print("ERROR: Cannot connect back to Wi-Fi")
+#            print("ERROR: Cannot connect back to Wi-Fi")
         else:
             ntptime.settime()
             try:
