@@ -39,6 +39,7 @@ MQTT_SUB_TOPIC_ALL = MQTT_TOPIC_PREFIX + '#'
 MQTT_SUB_TOPIC_CMD = MQTT_TOPIC_PREFIX + 'command'
 MQTT_SUB_TOPIC_CONF = MQTT_TOPIC_PREFIX + 'config'
 MQTT_PUB_TOPIC_STATUS = MQTT_TOPIC_PREFIX + 'status'
+MQTT_SUB_TOPIC_STATUS = MQTT_PUB_TOPIC_STATUS
 MQTT_SUB_TOPIC_HASS_PREFIX = MQTT_TOPIC_PREFIX + 'hass/'
 MQTT_SUB_TOPIC_HASS_SET = MQTT_SUB_TOPIC_HASS_PREFIX + '+/set'
 MQTT_PUB_TOPIC_HASS_PREFIX = MQTT_TOPIC_PREFIX + 'hass/'
@@ -101,10 +102,14 @@ m_rastrooffsets1 = ["-", "+"]
 m_rdevactions = ["off", "on", "scene"]
 m_ralarmtypes = ["day", "week"]
 
-def do_connect(ssid, pwd):
+def do_connect(ssid, pwd, forced=False):
     """Connect to Wi-Fi network with 10s timeout"""
+    global DEBUG
     import network
     sta_if = network.WLAN(network.STA_IF)
+    if forced:
+        sta_if.disconnect()
+        time.sleep(2)
     if not sta_if.isconnected():
         # if DEBUG: print('connecting to network...')
         sta_if.active(True)
@@ -126,12 +131,13 @@ def do_connect(ssid, pwd):
 
 def on_message(topic, msg):
     """Callback for MQTT published messages """
+    global DEBUG, MQTT_SUB_TOPIC_CMD, MQTT_SUB_TOPIC_STATUS, MQTT_SUB_TOPIC_CONF, MQTT_SUB_TOPIC_HASS_PREFIX
     m = msg.decode("utf-8")
     t = topic.decode("utf-8")
     if DEBUG: print('MQTT received: %s from %s' % (m, t))
     if (t == MQTT_SUB_TOPIC_CMD):
         process_command(m)
-    if (t == MQTT_PUB_TOPIC_STATUS):
+    if (t == MQTT_SUB_TOPIC_STATUS):
         process_status(m)
     if (t == MQTT_SUB_TOPIC_CONF):
         process_config(m)
@@ -139,29 +145,71 @@ def on_message(topic, msg):
         process_hass(t, m)
 
 
-def initMQTT():
+def connectWiFi(forced=False):
+    global DEBUG, SSID, PASS
+    if DEBUG: print("Connecting to Wi-Fi")
+    if m_WiFi_connected and not forced:
+        if DEBUG: print("Already connected to Wi-Fi")
+        return True
+    wifi_error(2)
+    if do_connect(SSID, PASS, forced):
+        print_progress("Wi-Fi OK")
+        wifi_error(0)
+        try:
+            ntptime.settime()
+        except:
+            pass
+        return True
+    else:
+        print("Error connecting to Wi-Fi")
+        wifi_error(1)
+        return False
+
+
+def initMQTT(mqtt_client):
     """Initialise MQTT client and connect to the MQTT broker. """
-    global m_client
-    if not m_client:
-        print("ERROR: No MQTT connection to init for")
+    global m_client, m_WiFi_connected, m_systemstatus, DEBUG, MQTT_PASS, MQTT_USER, MQTT_SERVER, BT_ERROR_FLAG, MQTT_CLIENT_ID
+    global MQTT_SUB_TOPIC_CMD, MQTT_SUB_TOPIC_STATUS, MQTT_SUB_TOPIC_CONF, MQTT_SUB_TOPIC_HASS_SET, MQTT_PUB_TOPIC_STATUS
+    if not m_WiFi_connected:
+        print("ERROR: MQTT: no Wi-Fi connected")
         return False
-    m_client.set_callback(on_message)  # Specify on_message callback
-    try:
-        m_client.connect()   # Connect to MQTT broker
-    except:
-        print("ERROR: Cannot reach MQTT broker!")
+    if mqtt_client is None:
+        if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
+        if MQTT_USER == '':
+            MQTT_USER = None
+        if MQTT_PASS == '':
+            MQTT_PASS = None
+        try:
+            mqtt_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
+        except:
+            mqtt_client = None
+    if mqtt_client is not None:
+        print_progress("MQTT OK")
+        m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
+        mqtt_client.set_callback(on_message)  # Specify on_message callback
+        try:
+            mqtt_client.connect()   # Connect to MQTT broker
+        except:
+            print("ERROR: MQTT: Cannot reach broker!")
+            mqtt_error(1)
+            return False
+        m_client = mqtt_client
+    #    m_client.subscribe(MQTT_SUB_TOPIC_ALL)
+        m_client.subscribe(MQTT_SUB_TOPIC_CMD)
+        m_client.subscribe(MQTT_SUB_TOPIC_STATUS)
+        m_client.subscribe(MQTT_SUB_TOPIC_CONF)
+        m_client.subscribe(MQTT_SUB_TOPIC_HASS_SET)
+        m_client.publish(MQTT_PUB_TOPIC_STATUS, "Ready")
+        mqtt_error(0)
+        return True
+    else:
+        mqtt_error(1)
         return False
-#    m_client.subscribe(MQTT_SUB_TOPIC_ALL)
-    m_client.subscribe(MQTT_SUB_TOPIC_CMD)
-    m_client.subscribe(MQTT_PUB_TOPIC_STATUS)
-    m_client.subscribe(MQTT_SUB_TOPIC_CONF)
-    m_client.subscribe(MQTT_SUB_TOPIC_HASS_SET)
-    m_client.publish(MQTT_PUB_TOPIC_STATUS, "Ready")
-    return True
 
 
 def _send_command(cmd: str = 'AT'):
     """Internal method to send AT commands to BLE module appending 0D0A to the end"""
+    global DEBUG, STATUS_TO_MESH
     if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
     print_status(STATUS_TO_MESH)
 #    cmd = cmd + '\r\n'
@@ -238,6 +286,7 @@ def setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
 
 def cacheMeshSecrets(name, pwd, cache_path=Mesh_Secrets):
     """Store mesh secrets in Flash"""
+    global DEBUG
     if DEBUG: print("Create cache for mesh secrets in %s" % cache_path)
     meshsecrets = ujson.loads('{' + '"meshname":"{:s}", "meshpass":"{:s}"'.format(name, pwd) +'}')
     if cache_path is None:
@@ -255,6 +304,7 @@ def cacheMeshSecrets(name, pwd, cache_path=Mesh_Secrets):
 
 def retrieveMeshSecrets(def_name=DEFAULT_MESHNAME, def_pass=DEFAULT_MESHPWD, cache_path=Mesh_Secrets):
     """Get the stored or default mesh secrets"""
+    global DEBUG
     if DEBUG: print("DEBUG: Retrieving mesh secrets from %s" % Mesh_Secrets)
     if cache_path is None:
         return None
@@ -274,7 +324,7 @@ def retrieveMeshSecrets(def_name=DEFAULT_MESHNAME, def_pass=DEFAULT_MESHPWD, cac
 
 def refresh_devices(config, cache_path):
     """Refresh devices from configuration received"""
-    global m_devices, Device_Cache
+    global DEBUG, m_devices, Device_Cache
     if DEBUG: print("DEBUG: Refreshing device database")
     print_progress("Refresh devices")
     try:
@@ -297,6 +347,7 @@ def refresh_devices(config, cache_path):
 
 def retrieveDeviceDB(cache_path):
     """Restore device from DB"""
+    global DEBUG
     if DEBUG: print("Retrieving devices from cache %s" % cache_path)
     devices = None
     try:
@@ -314,7 +365,7 @@ def retrieveDeviceDB(cache_path):
 
 def lookup_device(name):
     """Look up the device's address from the given name"""
-    global m_devices
+    global DEBUG, m_devices
     devaddr = 0
     if m_devices is None or name == '':
         return devaddr
@@ -339,7 +390,7 @@ def lookup_device(name):
 
 def rev_lookup_device(devaddr):
     """Look up the device's address from the given name"""
-    global m_devices
+    global DEBUG, m_devices
     name = None
     if m_devices is None or devaddr == 0:
         return name
@@ -391,6 +442,7 @@ def mesh_send_asc(dst: int = 0x00, cmd: int = 0xd0, data: str = None):
         cmd:    Op code (1 byte)
         data:   String of hexified bytes
     """
+    global DEBUG
     length = len(data) >> 1
     if length == 0:
         return False
@@ -484,7 +536,7 @@ def check_callbacks():
 
 
 def process_callback(devaddr, callback):
-    global m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses,  DEBUG, s1, s2, m_expectedCallback
+    global DEBUG, m_client, m_rdevactions, m_ralarmtypes, m_rdevstatuses, m_expectedCallback
     gc.collect()
     mesg = {}
     if DEBUG: print("Processing call back from %04x" % devaddr)
@@ -788,7 +840,7 @@ def process_command(mqttcmd):
                     Hall light/off
                     Table lamp/dim:25
     """
-    global DEBUG, Meshname, Meshpass, m_expectedCallback
+    global DEBUG, Meshname, Meshpass, m_expectedCallback, ON_DATA, OFF_DATA
     if DEBUG: print("Process command %s" % mqttcmd)
     print_progress(mqttcmd[:16])
     if mqttcmd is not '':
@@ -975,7 +1027,7 @@ def process_command(mqttcmd):
                     cmd(did, 0xD7, [0x01] + list(data))
                     m_expectedCallback = None
             elif (hcmd == "del_group"):
-                # Set Countdown D7 11 02 00 LL HH
+                # Del group D7 11 02 00 LL HH
                 if (hexdata != ''):
                     try:
                         if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
@@ -988,7 +1040,7 @@ def process_command(mqttcmd):
                     cmd(did, 0xD7, [0x00] + list(data))
                     m_expectedCallback = None
             elif (hcmd == "set_remote"):
-                # Set Countdown F6 11 02 LL HH
+                # Set remote F6 11 02 LL HH
                 if (hexdata != ''):
                     try:
                         if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
@@ -1098,7 +1150,7 @@ def settime(did, yyyy=0,mo=0,dd=0,hh=0,mm=0,ss=0):
 
 
 def process_hass(topic, msg):
-    global DEBUG
+    global DEBUG, ON_DATA, OFF_DATA
     if DEBUG: print("Process HASS command %s at topic %s" % (msg, topic))
     ts = topic.split('/')
     if ts is None:
@@ -1240,6 +1292,7 @@ def cmd(device_addr, op_code, pars):
 
 def process_status(status):
     """Process statuses received from Mesh"""
+    global DEBUG
     if DEBUG: print("Process status %s" % status)
     pass
 
@@ -1251,7 +1304,7 @@ def process_config(conf):
             Mesh name and mesh password
             Device information including at least the Device name and Device address
     """
-    global Meshname, Meshpass, m_devices
+    global DEBUG, Meshname, Meshpass, m_devices
     config = None
     if DEBUG: print("Process config %s" % conf)
     print_progress("Renew config")
@@ -1276,6 +1329,7 @@ def process_config(conf):
 
 
 def wifi_error(e):
+    global WIFI_ERROR_FLAG, WIFI_CONNECTING
     """Flash LED upon Wi-Fi connection failed"""
     if e == 1:
         print_status(WIFI_ERROR_FLAG)
@@ -1288,6 +1342,7 @@ def wifi_error(e):
 
 def mqtt_error(e):
     """Flashes LED upon MQTT connection failure"""
+    global MQTT_ERROR_FLAG
     if e == 1:
         print_status(MQTT_ERROR_FLAG)
     else:
@@ -1296,6 +1351,7 @@ def mqtt_error(e):
 
 def ble_error(e):
     """Flashes LED upon communication problem with the BLE module"""
+    global BT_ERROR_FLAG
     if e == 1:
         print_status(BT_ERROR_FLAG)
     else:
@@ -1303,6 +1359,7 @@ def ble_error(e):
 
 def blemodu_error(e):
     """Flashes LED upon communication problem with the BLE module"""
+    global BTMOD_ERROR_FLAG
     if e == 1:
         print_status(BTMOD_ERROR_FLAG)
     else:
@@ -1312,7 +1369,7 @@ def blemodu_error(e):
 
 def exit_mode():
     """Exit willingly"""
-    global m_WiFi_connected, SSID, PASS
+    global m_WiFi_connected, SSID, PASS, EXIT_FLAG
     m_WiFi_connected = do_connect(SSID, PASS) # If we want webrepl afterwards
     print_status(EXIT_FLAG)
     time.sleep(3)
@@ -1374,6 +1431,7 @@ def displayInit():
 
 
 def print_progress(msg):
+    global DEBUG
     if DEBUG: print("Progress: %s" % msg)
     return
 
@@ -1523,33 +1581,7 @@ if released:
 else:
     print_status(~ALT_CONFIG)
 
-if DEBUG: print("Connecting to Wi-Fi")
-wifi_error(2)
-m_WiFi_connected = do_connect(SSID, PASS)
-
-if m_WiFi_connected:
-    print_progress("Wi-Fi OK")
-    wifi_error(0)
-    ntptime.settime()
-    if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
-    if MQTT_USER == '':
-        MQTT_USER = None
-    if MQTT_PASS == '':
-        MQTT_PASS = None
-    try:
-        m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
-    except:
-        m_client = None
-    if not initMQTT():
-        mqtt_error(1)
-    else:
-        print_progress("MQTT OK")
-        m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
-        mqtt_error(0)
-else:
-    if DEBUG: print("Error connecting to Wi-Fi")
-    wifi_error(1)
-
+m_WiFi_connected = connectWiFi()
 
 # Main()
 
@@ -1602,23 +1634,11 @@ while True:
             m_client = None
     if m_client is None:
         time.sleep(5)   # Sth wrong! Wait 5s before we attempt anything
-        m_WiFi_connected = do_connect(SSID, PASS)
-        if not m_WiFi_connected:
-            wifi_error(1)
-            print("ERROR: Cannot connect back to Wi-Fi")
-        else:
-            ntptime.settime()
-            try:
-                m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
-            except:
-                m_client = None
-            time.sleep(5)   # Wait 5s to make sure the damn network is ready
-            if not initMQTT():
-                mqtt_error(1)
-            else:
-                print_progress("MQTT OK")
-                m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
-                mqtt_error(0)
+        m_WiFi_connected = connectWiFi()
+        while not (initMQTT(m_client)):
+            time.sleep(10)
+            if not m_WiFi_connected:
+                m_WiFi_connected = connectWiFi()
     check_callbacks()
     check_reset()
 
