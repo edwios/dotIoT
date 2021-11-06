@@ -87,4 +87,4 @@ secrets.h
 secrets*.py
 .python-version
 *.pyc
-ESP32_LilyGo/WeatherInfoTV/*.mpy
+*.mpy
