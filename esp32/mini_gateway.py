@@ -212,10 +212,8 @@ def _send_command(cmd: str = 'AT'):
     global DEBUG, STATUS_TO_MESH
     if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
     print_status(STATUS_TO_MESH)
-#    cmd = cmd + '\r\n'
+    cmd = cmd + '\r\n'
     m_uart.write(cmd)
-    time.sleep(0.01)
-    m_uart.write('\r\n')
     time.sleep(0.3)
 
 
@@ -1503,13 +1501,13 @@ def error_indicator(n, flashmode=0, onoff=1):
             status_led[n].loop(True)
         if flashmode == 1:
             if status_led[n] is not None:
-                status_led[n].write_pulses((32767, 1, 32767, 8192, 1), start=1)
+                status_led[n].write_pulses((32767, 1, 32767, 8192, 1), True)
         elif flashmode == 2:
             if status_led[n] is not None:
-                status_led[n].write_pulses((16384, 1, 16384, 16384, 1), start=0)
+                status_led[n].write_pulses((16384, 1, 16384, 16384, 1), False)
         elif flashmode == 3:
             if status_led[n] is not None:
-                status_led[n].write_pulses((32767, 1, 8192, 8192, 1), start=0)
+                status_led[n].write_pulses((32767, 1, 8192, 8192, 1), False)
     else:
         if flashmode == 0:
             for i in range(0, NLED):
