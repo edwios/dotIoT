@@ -39,7 +39,7 @@ def readenv(mac_address, client, iface):
             print("[%s] Connection failed" % dt)
         err = True
     if err:
-        return
+        return err
     if DEBUG: print("[%s] Discovering Services..." % dt)
     try:
         _ = nano_sense.services
@@ -51,7 +51,9 @@ def readenv(mac_address, client, iface):
             nano_sense.disconnect()
         except:
             pass
-        return
+        err = True
+    if err:
+        return err
     if DEBUG:
         dt = time.strftime('%F %H:%M:%S')
         print("[%s] Discovering Characteristics..." % dt)
@@ -64,7 +66,9 @@ def readenv(mac_address, client, iface):
             nano_sense.disconnect()
         except:
             pass
-        return
+        err = True
+    if err:
+        return err
     if ac.count == 0:
         dt = time.strftime('%F %H:%M:%S')
         print("[%s] ERROR: Device %s provides no characteristic!" % (dt, mac_address))
@@ -72,7 +76,9 @@ def readenv(mac_address, client, iface):
             nano_sense.disconnect()
         except:
             pass
-        return
+        err = True
+    if err:
+        return err
     supports_temp = False
     supports_pressure = False
     supports_humidity = False
@@ -153,6 +159,7 @@ def readenv(mac_address, client, iface):
     mtopic = MQTT_PUB_TOPIC_STATUS.format(devicename)
     if client:
         client.publish(mtopic, jstr, retain=True)
+    return True
 
 
 def byte_array_to_int(value):
@@ -268,6 +275,7 @@ def read_lux(service):
 def get_args():
     arg_parser = ArgumentParser(description="BLE IoT Sensor Demo")
     arg_parser.add_argument("-t", "--interval", help="Data collection interval", default=900)
+    arg_parser.add_argument("-s", "--singleshot", help="Execute only once, for cron jobs. Overrides and invalidate --interval", action='store_true')
     arg_parser.add_argument("-i", "--interface", help="BLE interface", default=0)
     arg_parser.add_argument("-m", "--mac", help="MAC address of device to connect", default=None)
     arg_parser.add_argument("-d", "--debug", help="Debug", action='store_true')
@@ -326,6 +334,7 @@ def main():
     DEBUG = args.debug
     mqtt_hub = args.mqtt
     iface = args.interface
+    singleshot = args.singleshot
 
     m_connected = False
     m_auto_reconnect = False
@@ -334,14 +343,18 @@ def main():
     counter = 5
     pause_time = 0
     last = time.monotonic()
-    while True:
-        if (time.monotonic() - last > pause_time):
+    while (sleeptime > 0) or singleshot:
+        if (time.monotonic() - last > pause_time) or singleshot:
             last = time.monotonic()
             if mac_address is None:
+                n = 1
                 for mac in m_devicemapping:
-                    if DEBUG: print("Reading from {:s}".format(mac))
-                    readenv(mac, mqttclient, iface)
-                    time.sleep(30)
+                    if DEBUG: print("Reading {:d} or {:d} from {:s}".format(n, len(m_devicemapping), mac))
+                    err = readenv(mac, mqttclient, iface)
+                    n = n + 1
+                    if (n <= len(m_devicemapping)) and not err:
+                        if DEBUG: print("Waiting 30s for next one")
+                        time.sleep(30)
             else:
                 readenv(mac_address, mqttclient, iface)
             if counter == 0:
@@ -353,6 +366,10 @@ def main():
         if (not m_connected) and m_auto_reconnect:
             mqttclient = mqttinit(mqtt_hub)
         time.sleep(0.1)
+        if singleshot:
+            if DEBUG: print("Single shot mode")
+            singleshot = False
+            sleeptime = 0
 
 if __name__ == "__main__":
     main()
