@@ -1,4 +1,4 @@
-DEBUG = False    # Global debug printing
+# DEBUG = False    # Global debug printing, shall be set in boot.py
 USEOLED = False
 
 import time
