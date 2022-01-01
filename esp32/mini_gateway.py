@@ -780,9 +780,10 @@ def update_hass(name, state, brightness, cct):
     if cct is not None:
         hasscct = cct
         if cct <= 100:
-            cct = 100 - cct
-            hasscct = int(cct * 347 / 100 + 153)
+            cct1 = 100 - cct
+            hasscct = int(cct1 * 347 / 100 + 153)
         hass_mesg['color_temp'] = hasscct
+        hass_mesg['batt'] = cct
     hass_mesg['timestamp'] = str(time.time())
     try:
         if m_client:
