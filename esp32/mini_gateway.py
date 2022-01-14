@@ -939,6 +939,9 @@ def process_command(mqttcmd):
             elif (hcmd == "get_countdown"):
                 cmd(did, 0xea, [0x10, 0x80])
                 m_expectedCallback = [did, 0xeb, 0x01]
+            elif (hcmd == "get_g8"):
+                cmd(did, 0xdd, [0x10, 0x01])
+                m_expectedCallback = [did, 0xd4, 0x00]
             elif (hcmd == "get_timer"):
                 if (hexdata != ''):
                     try:
