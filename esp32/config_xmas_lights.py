@@ -8,6 +8,7 @@ MQTT_SERVER = '10.0.1.250'
 MQTT_CLIENT_ID = 'xmaslights'
 MQTT_TOPIC = 'sensornet/#'
 MQTT_TOPIC_PREFIX = 'sensornet/'
+MQTT_TOPIC_HASS_PREFIX = 'sensornet/BleuSkyV2/hass/'
 
 # Board light defs
 LED1 = Pin(12)
