@@ -16,7 +16,8 @@ import ostrich_r
 import font6
 import ssd1306
 import json
-from neopixel import NeoPixel   
+from neopixel import NeoPixel
+import ntptime
 #import esp
 #esp.osdebug(None)
 #import gc
@@ -36,12 +37,17 @@ DEFAULT_PARS    = "010100"
 MQTT_SERVER = config.MQTT_SERVER
 MQTT_CLIENT_ID = config.MQTT_CLIENT_ID
 MQTT_TOPIC_PREFIX = config.MQTT_TOPIC_PREFIX
+MQTT_TOPIC_HASS_PREFIX = config.MQTT_TOPIC_HASS_PREFIX
+
 MQTT_USER = secrets.MQTT_USER
 MQTT_PASS = secrets.MQTT_PASS
 MQTT_SUB_TOPIC_ALL = MQTT_TOPIC_PREFIX + '#'
 MQTT_SUB_TOPIC_CMD = MQTT_TOPIC_PREFIX + 'xmaslight/command'
 MQTT_SUB_TOPIC_CONF = MQTT_TOPIC_PREFIX + 'xmaslight/config'
 MQTT_PUB_TOPIC_STATUS = MQTT_TOPIC_PREFIX + 'xmaslight/status'
+MQTT_PUB_TOPIC_HASS_PREFIX = MQTT_TOPIC_HASS_PREFIX
+MQTT_SUB_TOPIC_HASS_PREFIX = MQTT_TOPIC_HASS_PREFIX
+MQTT_SUB_TOPIC_HASS_SET = MQTT_SUB_TOPIC_HASS_PREFIX + '+/set'
 
 CACHEDIR = 'cache'
 DEVICE_CACHE_NAME = 'devices.json'
@@ -68,16 +74,21 @@ status_led_2 = None
 m_client = None
 m_devices = None
 m_systemstatus = 0
+m_brightness = 10
+m_colour = 0xFFFFFF
+m_state = "off"
 Meshname = DEFAULT_MESHNAME
 Meshpass = DEFAULT_MESHPWD
 
-WIFI_ERROR_FLAG = 1
-BT_ERROR_FLAG = 2
-MQTT_ERROR_FLAG = 4
-BTMOD_ERROR_FLAG = 8
-STATUS_TO_MESH = 0x11
-STATUS_FROM_MESH = 0x12
-EXIT_FLAG = 0x80
+WIFI_ERROR_FLAG = const(1)
+BT_ERROR_FLAG = const(2)
+MQTT_ERROR_FLAG = const(4)
+BTMOD_ERROR_FLAG = const(8)
+STATUS_TO_MESH = const(0x11)
+STATUS_FROM_MESH = const(0x12)
+WIFI_CONNECTING = const(32)
+EXIT_FLAG = const(0x80)
+WIFI_CONNECTING_SYMB = "W)))"
 WIFI_ERROR_SYMB = "Wi-Fi"
 BT_ERROR_SYMB = "MESH"
 MQTT_ERROR_SYMB = "MQTT"
@@ -86,12 +97,16 @@ STATUS_TO_MESH_SYMB = ">>>Mesh"
 STATUS_FROM_MESH_SYMB = "Mesh>>>"
 EXIT_SYMB = "QUIT"
 
-def do_connect(ssid, pwd):
+def do_connect(ssid, pwd, forced=False):
     """Connect to Wi-Fi network with 10s timeout"""
+    global DEBUG
     import network
     sta_if = network.WLAN(network.STA_IF)
+    if forced:
+        sta_if.disconnect()
+        time.sleep(2)
     if not sta_if.isconnected():
-        if DEBUG: print('connecting to network...')
+        # if DEBUG: print('connecting to network...')
         sta_if.active(True)
         time.sleep(0.5)
         sta_if.connect(ssid, pwd)
@@ -106,11 +121,12 @@ def do_connect(ssid, pwd):
             WiFi_connected = True
         if WiFi_connected and DEBUG: print('Wi-Fi connected, network config:', sta_if.ifconfig())
         return WiFi_connected
+    return True
 
 
 def on_message(topic, msg):
     """Callback for MQTT published messages """
-    global DEBUG, MQTT_SUB_TOPIC_CMD, MQTT_PUB_TOPIC_STATUS, MQTT_SUB_TOPIC_CONF
+    global DEBUG, MQTT_SUB_TOPIC_CMD, MQTT_PUB_TOPIC_STATUS, MQTT_SUB_TOPIC_CONF, MQTT_SUB_TOPIC_HASS_PREFIX
     m = msg.decode("utf-8")
     t = topic.decode("utf-8")
     if DEBUG: print('MQTT received: %s from %s' % (m, t))
@@ -120,18 +136,74 @@ def on_message(topic, msg):
         process_status(m)
     if (t == MQTT_SUB_TOPIC_CONF):
         process_config(m)
+    if (t.startswith(MQTT_SUB_TOPIC_HASS_PREFIX)):
+        process_hass(t, m)
 
 
-def initMQTT():
-    """Initialise MQTT client and connect to the MQTT broker. """
-    global m_client, MQTT_SUB_TOPIC_ALL
-    if not m_client:
-        print("ERROR: No MQTT connection to init for")
+def connectWiFi(forced=False):
+    global DEBUG, SSID, PASS
+    if DEBUG: print("Connecting to Wi-Fi")
+    if m_WiFi_connected and not forced:
+        if DEBUG: print("Already connected to Wi-Fi")
+        return True
+    wifi_error(2)
+    if do_connect(SSID, PASS, forced):
+        print_progress("Wi-Fi OK")
+        wifi_error(0)
+        try:
+            ntptime.settime()
+        except:
+            pass
+        return True
+    else:
+        print("Error connecting to Wi-Fi")
+        wifi_error(1)
         return False
-    m_client.set_callback(on_message)  # Specify on_message callback
-    m_client.connect()   # Connect to MQTT broker
-    m_client.subscribe(MQTT_SUB_TOPIC_ALL)
-    return True
+
+
+def initMQTT(mqtt_client):
+    """Initialise MQTT client and connect to the MQTT broker. """
+    global m_client, m_WiFi_connected, m_systemstatus, DEBUG, MQTT_PASS, MQTT_USER, MQTT_SERVER, BT_ERROR_FLAG, MQTT_CLIENT_ID
+    global MQTT_SUB_TOPIC_CMD, MQTT_SUB_TOPIC_STATUS, MQTT_SUB_TOPIC_CONF, MQTT_SUB_TOPIC_HASS_SET, MQTT_PUB_TOPIC_STATUS
+    if not m_WiFi_connected:
+        print("ERROR: MQTT: no Wi-Fi connected")
+        return False
+    if mqtt_client is None:
+        if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
+        if MQTT_USER == '':
+            MQTT_USER = None
+        if MQTT_PASS == '':
+            MQTT_PASS = None
+        try:
+            mqtt_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
+        except:
+            mqtt_client = None
+    if mqtt_client is not None:
+        print_progress("MQTT OK")
+        if DEBUG: print("Connected to MQTT server")
+        m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
+        mqtt_client.set_callback(on_message)  # Specify on_message callback
+        try:
+            mqtt_client.connect()   # Connect to MQTT broker
+        except:
+            print("ERROR: MQTT: Cannot reach broker!")
+            mqtt_error(1)
+            return False
+        m_client = mqtt_client
+        m_client.subscribe(MQTT_SUB_TOPIC_CMD)
+        m_client.subscribe(MQTT_SUB_TOPIC_CONF)
+        m_client.subscribe(MQTT_SUB_TOPIC_HASS_SET)
+        m_client.publish(MQTT_PUB_TOPIC_STATUS, "Ready")
+        mqtt_error(0)
+        return True
+    else:
+        mqtt_error(1)
+        return False
+
+
+def updateStatus():
+    """ Send an update to MQTT for status renew """
+    global m_client, MQTT_PUB_TOPIC_STATUS, DEBUG
 
 
 def _send_command(cmd: str = 'AT'):
@@ -189,7 +261,7 @@ def setMeshParams(name=DEFAULT_MESHNAME, pwd=DEFAULT_MESHPWD):
         return False
     if not resetBLEModule():
         print("ERROR: Cannot reset BLE module!")
-        ble_error()
+        ble_error(1)
     if not _setMeshParams(name, pwd):
         return False
     cacheMeshSecrets(name, pwd, Mesh_Secrets)
@@ -392,7 +464,7 @@ def getReply(timeout=10):
         if DEBUG: print("DEBUG: received %d lines of text as %s" % (len(reply), reply))
         return reply
 
-
+"""
 def check_callbacks():
     global DEBUG, STATUS_FROM_MESH
     replies = getReply(3)
@@ -450,10 +522,141 @@ def process_callback(devaddr, callback):
     else:
         if DEBUG: print("Unsupported call back opcode %s" % opcode)
         return
+"""
+
+def update_hass(name, state, brightness, cct):
+    global DEBUG, m_client, MQTT_PUB_TOPIC_HASS_PREFIX
+    if DEBUG: print("update_hass(): Pub status for %s" % (name))
+    hass_state_topic = '{:s}{:s}'.format(MQTT_PUB_TOPIC_HASS_PREFIX, name)
+    hass_mesg = {}
+    hass_mesg['device_name'] = name
+    if state is not None:
+        hass_mesg['state'] = state.upper()
+    if brightness is not None:
+        hass_mesg['brightness'] = brightness
+    if cct is not None:
+        hasscct = cct
+        if cct <= 100:
+            cct1 = 100 - cct
+            hasscct = int(cct1 * 347 / 100 + 153)
+        hass_mesg['color_temp'] = hasscct
+        hass_mesg['batt'] = cct
+    hass_mesg['timestamp'] = str(time.time())
+    try:
+        if m_client:
+            m_client.publish(hass_state_topic, json.dumps(hass_mesg).encode('utf-8'))
+    except:
+        print("ERROR: update_hass(hass_mesg) has invalid content")
+        return
+
+
+def process_hass(topic, msg):
+    global DEBUG, ON_DATA, OFF_DATA
+    global m_brightness, m_colour, m_state, neo1
+    if DEBUG: print("Process HASS command %s at topic %s" % (msg, topic))
+    try:
+        mqtt_json = json.loads(msg)
+    except:
+        print("ERROR: JSON format error")
+        return
+    ts = topic.split('/')
+    if ts is None:
+        # We don't handle topics without '/'
+        print("ERROR: process_hass(): Topic has no '/'")
+        return
+    if ts[-1:][0] != 'set':
+        # We don't handle here non-set topics
+        print("ERROR: process_hass(): Topic is not ended with 'set' (%s)" % ts[-1:][0])
+        return
+    device_name = ts[-2:][0]
+    if device_name == '' or device_name == 'hass':
+        # Missing device name, we don't handle either
+        print("ERROR: process_hass(): Topic does not contain device name (%s)" % device_name)
+        return
+    if (neo1 is None):
+        print("Error: Cannot proceed with no neopixels available")
+        print_progress("E: No NEO")
+        return
+    if device_name is not None:
+        if DEBUG: print("HASS control of device %s" % device_name)
+        if device_name != "Bedlight":
+            if DEBUG: print("Not me")
+            return
+        try:
+            state = mqtt_json['state']
+        except:
+            state = m_state
+        else:
+            state = state.lower()
+        if state == "on":
+            st = 1
+            m_state = "on"
+        else:
+            st = 0
+            m_state = "off"
+        try:
+            brightness = mqtt_json['brightness']
+        except:
+            brightness = None
+        try:
+            cct = mqtt_json['color_temp']
+        except:
+            cct = None
+        try:
+            color = mqtt_json['color']
+        except:
+            color = None
+        hexdata = ''
+        if brightness is not None:
+            try:
+                m_brightness = int(brightness)
+            except:
+                brightness = m_brightness
+        else:
+            brightness = m_brightness
+        if DEBUG: print("HASS control %s for state: %s, brightness %s, cct: %s, color: %s" % (device_name, state, brightness, cct, color))
+        if (color is not None):
+            try:
+                cr = color['r']
+                cg = color['g']
+                cb = color['b']
+                r = int(cr)
+                g = int(cg)
+                b = int(cb)
+            except:
+                print("ERROR: Malformed RGB colour in JSON")
+                return
+            if (r > 255) or (g > 255) or (b > 255) or (r < 0) or (g < 0) or (b < 0):
+                print("ERROR: RGB colour values outside of 0..255")
+                return
+            hexdata = '{:02X}'.format(r) + '{:02X}'.format(g) + '{:02X}'.format(b)
+            if hexdata != '':
+                cl = int(hexdata, 16)
+                if (cl > 0xFFFFFF):
+                    print("ERROR: RGB value must be 3 bytes")
+                    print_progress("E: RGB")
+                    return
+                else:
+                    m_colour = cl
+        data = m_colour.to_bytes(3, 'big')
+        if (m_colour > 0) and (m_brightness > 0) and (state != "off"):
+            st = 1
+            m_state = "on"
+        b = m_brightness * st
+        if DEBUG: print("DEBUG: Setting ALL pixels to %X (%d)" % (m_colour, b))
+        for i in range(N_NEO):
+            neo1[i] = (int(data[0] * b / 100), int(data[1] * b / 100), int(data[2] * b / 100))
+        neo1.write()
+        if (m_colour == 0) or (m_brightness == 0) or (st == 0):
+            update_hass("Bedlight", "OFF", 0, 0)
+            m_state = "off"
+        else:
+            update_hass("Bedlight", "ON", m_brightness, 0)
+
 
 
 def process_command(mqttcmd):
-    global oled, DEBUG
+    global oled, neo1, N_NEO, DEBUG
     """Process mesh commands received from MQTT
         MQTT commands take forms:
             {"command", "state", "brightness", "color_temp", "white_value", "rgb", "raw", "value"}
@@ -467,7 +670,6 @@ def process_command(mqttcmd):
                     Hall light/off
                     Table lamp/dim:25
     """
-    global DEBUG
     if DEBUG: print("Process command %s" % mqttcmd)
     try:
         mqtt_json = json.loads(mqttcmd)
@@ -483,6 +685,7 @@ def process_command(mqttcmd):
     except:
         mqttval = None
     if mqttcmd is not None:
+        mqttcmd = mqttcmd.lower()
         print_progress(mqttcmd[:16])
         if mqttcmd is not None:
             # {"command":"debug"}
@@ -534,7 +737,8 @@ def process_command(mqttcmd):
             pixels = None
         if pixels is not None:
             if len(pixels) > N_NEO:
-                print("WARN: pixels cannot be larger than the number of actual dots")
+                print_progress("W: N pix")
+                if DEBUG: print("DEBUG: Trimmed to %d pixels", N_NEO)
                 pixels = pixels[:N_NEO]
         if mhcmd is not None:
             hcmd = mhcmd.lower()
@@ -542,6 +746,10 @@ def process_command(mqttcmd):
             hcmd = ''
         hexdata = ''
         did = 0
+        if (neo1 is None):
+            print("Error: Cannot proceed with no neopixels available")
+            print_progress("E: No NEO")
+            return
         if dids is not None:
             try:
                 did = int(dids)
@@ -562,7 +770,7 @@ def process_command(mqttcmd):
                     except:
                         i = 25
                     if (i > 100 or i < 0):
-                        print("ERROR: Lumnance value must be between 0 and 100")
+                        print_progress("E: Lum")
                     else:
                         r, g, b = neo1[did]
                         neo1[did] = (int(r * i / 100), int(g * i / 100), int(b * i / 100))
@@ -584,11 +792,23 @@ def process_command(mqttcmd):
                         # neo1[did] = (r, g, b)
             elif (color is not None):
                 # {"color":{"r":100, "g":210, "b":155}, "device_addr":2}
-                hexdata = '{:02X}'.format(color['r']) + '{:02X}'.format(color['g']) + '{:02X}'.format(color['b'])
+                try:
+                    color_r = color['r']
+                except:
+                    color_r = 0
+                try:
+                    color_g = color['g']
+                except:
+                    color_g = 0
+                try:
+                    color_b = color['b']
+                except:
+                    color_b = 0
+                hexdata = '{:02X}'.format(color_r) + '{:02X}'.format(color_g) + '{:02X}'.format(color_b)
                 if hexdata != '':
                     i = int(hexdata, 16)
                     if (i > 0xFFFFFF):
-                        print("ERROR: RGB value must be 3 bytes")
+                        print_progress("E: RGB")
                     else:
                         data = i.to_bytes(3, 'big')
                         neo1[did] = (data[0], data[1], data[2])
@@ -597,18 +817,41 @@ def process_command(mqttcmd):
             neo1.write()
         elif (color is not None) and (pixels is not None):
             # {"color":{"r":100, "g":210, "b":155}, "pixels":"111000111000111"}
-            hexdata = '{:02X}'.format(color['r']) + '{:02X}'.format(color['g']) + '{:02X}'.format(color['b'])
+            try:
+                color_r = color['r']
+            except:
+                color_r = 0
+            try:
+                color_g = color['g']
+            except:
+                color_g = 0
+            try:
+                color_b = color['b']
+            except:
+                color_b = 0
+            hexdata = '{:02X}'.format(color_r) + '{:02X}'.format(color_g) + '{:02X}'.format(color_b)
             if hexdata != '':
-                i = int(hexdata, 16)
-                if (i > 0xFFFFFF):
-                    print("ERROR: RGB value must be 3 bytes")
+                try:
+                    cl = int(hexdata, 16)
+                except:
+                    cl = 0
+                if (cl > 0xFFFFFF):
+                    print_progress("E: RGB")
+                elif len(pixels) == 0:
+                    print_progress("E: pixels")
                 else:
                     if DEBUG: print("DEBUG: Setting %d pixels to a color" % len(pixels))
-                    data = i.to_bytes(3, 'big')
+                    data = cl.to_bytes(3, 'big')
+                    all_dark = True
                     for i in range(len(pixels)):
                         if pixels[i:i+1] == '1':
+                            all_dark = False    # Any pixel on is not dark
                             neo1[i] = (data[0], data[1], data[2])
                     neo1.write()
+                    if (cl == 0) or all_dark:
+                        update_hass("Bedlight", "OFF", 0, 0)
+                    else:
+                        update_hass("Bedlight", "ON", 100, 0)
         else:
             return
 
@@ -632,7 +875,7 @@ def process_status(status):
 
 
 def process_config(conf):
-    global DEBUG
+    global N_NEO, DEBUG
     """Process configuration updates from Mesh or WiFi
 
         The configuration is expected to be a decrypted JSON containing one or more of the followings:
@@ -659,26 +902,52 @@ def process_config(conf):
         Meshname = mn
         Meshpass = mp
         setMeshParams(mn, mp)
-    refresh_devices(config, Device_Cache)
+        refresh_devices(config, Device_Cache)
+    try:
+        np = config['pixels']
+    except:
+        np = N_NEO
+    if (np != N_NEO):
+        # We have change of pixels
+        if (np <= 0) or (np > 500):
+            print_progress("E: N pix")
+            return False
+        N_NEO = np
+        msg = 'I: {:d}'.format(N_NEO)
+        print_progress(msg)
+        if DEBUG: print("Reconfigured to %d pixels" % N_NEO)
+        board_init()
     return True
 
 
-def wifi_error():
-    global status_led_1, WIFI_ERROR_FLAG
+def wifi_error(e):
+    global WIFI_ERROR_FLAG, WIFI_CONNECTING
     """Flash LED upon Wi-Fi connection failed"""
-    print_status(WIFI_ERROR_FLAG)
+    if e == 1:
+        print_status(WIFI_ERROR_FLAG)
+    elif e == 2:
+        print_status(WIFI_CONNECTING)
+    else:
+        print_status(~WIFI_CONNECTING)
+        print_status(~WIFI_ERROR_FLAG)
 
 
-def mqtt_error():
-    global status_led_1, MQTT_ERROR_FLAG
+def mqtt_error(e):
+    global MQTT_ERROR_FLAG
     """Flashes LED upon MQTT connection failure"""
-    print_status(MQTT_ERROR_FLAG)
+    if e == 1:
+        print_status(MQTT_ERROR_FLAG)
+    else:
+        print_status(~MQTT_ERROR_FLAG)
 
 
-def ble_error():
-    global status_led_2, BT_ERROR_FLAG
+def ble_error(e):
+    global BT_ERROR_FLAG
     """Flashes LED upon communication problem with the BLE module"""
-    print_status(BT_ERROR_FLAG)
+    if e == 1:
+        print_status(BT_ERROR_FLAG)
+    else:
+        print_status(~BT_ERROR_FLAG)
 
 
 def exit_mode():
@@ -707,6 +976,7 @@ def clear_neo():
         for i in range(N_NEO):
             neo1[i] = (0, 0, 0)
         neo1.write()
+        update_hass("Bedlight", "OFF", 0, 0)
 
 
 m_rstcnt = 0
@@ -770,6 +1040,8 @@ def print_status(statusflag):
             msg = STATUS_FROM_MESH_SYMB
         elif st & STATUS_TO_MESH:
             msg = STATUS_TO_MESH_SYMB
+        elif st & WIFI_CONNECTING:
+            msg = WIFI_CONNECTING_SYMB
         else:
             msg = "ERR: "
             if st & WIFI_ERROR_FLAG:
@@ -800,7 +1072,7 @@ displayInit()
 
 t = time.time()
 released = False
-"""
+'''
 if key1.value() == 0:
     while (time.time() - t < WAIT_TIME):
         if (key1.value() == 1):
@@ -808,7 +1080,6 @@ if key1.value() == 0:
             break
     if not released:
         exit_mode()
-"""
 
 if released:
     """Button pressed during boot, change to config #2"""
@@ -839,32 +1110,15 @@ else:
     wri_m.set_textpos(oled, 16, 0)  # verbose = False to suppress console output
     wri_m.printstring('Default config')
     oled.show()
+'''
 
+wri_m.set_textpos(oled, 16, 0)  # verbose = False to suppress console output
+wri_m.printstring('Default config')
+oled.show()
 
 
 if DEBUG: print("Connecting to Wi-Fi")
-m_WiFi_connected = do_connect(SSID, PASS)
-
-if m_WiFi_connected:
-    print_progress("Wi-Fi OK")
-    m_systemstatus = m_systemstatus & ~WIFI_ERROR_FLAG
-    if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
-    if MQTT_USER == '':
-        MQTT_USER = None
-    if MQTT_PASS == '':
-        MQTT_PASS = None
-    try:
-        m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
-    except:
-        m_client = None
-    if not initMQTT():
-        mqtt_error()
-    else:
-        print_progress("MQTT OK")
-        m_systemstatus = m_systemstatus & ~BT_ERROR_FLAG
-else:
-    wifi_error()
-
+m_WiFi_connected = connectWiFi()
 
 # Main()
 """
@@ -930,10 +1184,24 @@ print_progress("                ")
 print_status(m_systemstatus)
 m_systemstatus = 0  # Reset system status so that new status can be updated within the loop
 time.sleep(0.1)
-if DEBUG: print("Entering infinte loop")
+# if DEBUG: print("Entering infinte loop")
 while True:
     # Processes MQTT network traffic, callbacks and reconnections. (Blocking)
-    if m_client: m_client.check_msg()
-#    check_callbacks()
+    if m_client: 
+        try:
+            m_client.check_msg()
+        except:
+            # if DEBUG: print("MQTT broker not reachable")
+            m_client = None
+    if m_client is None:
+        time.sleep(5)   # Sth wrong! Wait 5s before we attempt anything
+        m_WiFi_connected = connectWiFi()
+        while not (initMQTT(m_client)):
+            time.sleep(10)
+            if not m_WiFi_connected:
+                m_WiFi_connected = connectWiFi()
+        if (m_state != "on"):
+            update_hass("Bedlight", "OFF", 0, 0)
+        else:
+            update_hass("Bedlight", "ON", m_brightness, 0)
     check_reset()
-
