@@ -1,5 +1,6 @@
 # DEBUG = False    # Global debug printing, shall be set in boot.py
 USEOLED = False
+VERSION = '2.1'
 
 import time
 from umqtt.simple import MQTTClient
@@ -20,6 +21,9 @@ import ntptime
 #import gc
 #gc.collect()
 from micropython import const
+
+# Set clock freq to 240MHz
+machine.freq(240000000)
 
 DEFAULT_MESHNAME = secrets.DEFAULT_MESHNAME
 DEFAULT_MESHPWD = secrets.DEFAULT_MESHPWD
@@ -199,7 +203,13 @@ def initMQTT(mqtt_client):
         m_client.subscribe(MQTT_SUB_TOPIC_STATUS)
         m_client.subscribe(MQTT_SUB_TOPIC_CONF)
         m_client.subscribe(MQTT_SUB_TOPIC_HASS_SET)
-        m_client.publish(MQTT_PUB_TOPIC_STATUS, "Ready")
+        try:
+            m_client.publish(MQTT_PUB_TOPIC_STATUS, "Ready")
+        except:
+            print("ERROR: initMQTT() - publish failed")
+            m_client = None
+            mqtt_error(1)
+            return False
         mqtt_error(0)
         return True
     else:
@@ -786,10 +796,16 @@ def update_hass(name, state, brightness, cct):
         hass_mesg['batt'] = cct
     hass_mesg['timestamp'] = str(time.time())
     try:
-        if m_client:
-            m_client.publish(hass_state_topic, json.dumps(hass_mesg).encode('utf-8'))
+        jstr = json.dumps(hass_mesg).encode('utf-8')
     except:
-        print("ERROR: update_hass(hass_mesg) has invalid content")
+        print("ERROR: update_hass() - Invalid content in mesg")
+        return
+    try:
+        if m_client:
+            m_client.publish(hass_state_topic, jstr)
+    except:
+        print("WARN: update_hass(hass_mesg) failed")
+        m_client = None
         return
 
 
@@ -802,10 +818,16 @@ def update_hass2(mesg):
     hass_state_topic = '{:s}{:s}'.format(MQTT_PUB_TOPIC_HASS_PREFIX, name)
     mesg['timestamp'] = str(time.time())
     try:
-        if m_client:
-            m_client.publish(hass_state_topic, json.dumps(mesg).encode('utf-8'))
+        jstr = json.dumps(mesg).encode('utf-8')
     except:
-        print("ERROR: update_hass(mesg) has invalid content")
+        print("ERROR: update_hass2() - Invalid content in mesg")
+        return
+    try:
+        if m_client:
+            m_client.publish(hass_state_topic, jstr)
+    except:
+        print("WARN: update_hass(mesg) failed")
+        m_client = None
         return
 
 
@@ -822,8 +844,13 @@ def update_status_mqtt(mesg):
         print("ERROR: update_status_mqtt(mesg) has invalid mesg")
         return
     if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
-    if m_client:
-        m_client.publish(topic, jstr.encode('utf-8'))
+    try:
+        if m_client:
+            m_client.publish(topic, jstr.encode('utf-8'))
+    except:
+        print("WARN: update_status_mqtt(mesg) failed")
+        m_client = None
+        return
 
 
 def process_command(mqttcmd):
@@ -1028,6 +1055,19 @@ def process_command(mqttcmd):
                     data = i.to_bytes(2, 'little')
                     cmd(did, 0xD7, [0x01] + list(data))
                     m_expectedCallback = None
+            elif (hcmd == "set_remote"):
+                # Set Countdown D7 11 02 01 LL HH
+                if (hexdata != ''):
+                    try:
+                        if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
+                            i = int(hexdata, 16)
+                        else:
+                            i = int(hexdata)
+                    except:
+                        i = 0x8001
+                    data = i.to_bytes(2, 'little')
+                    cmd(did, 0xEC, list(data))
+                    m_expectedCallback = None
             elif (hcmd == "del_group"):
                 # Del group D7 11 02 00 LL HH
                 if (hexdata != ''):
@@ -1041,7 +1081,7 @@ def process_command(mqttcmd):
                     data = i.to_bytes(2, 'little')
                     cmd(did, 0xD7, [0x00] + list(data))
                     m_expectedCallback = None
-            elif (hcmd == "set_remote"):
+            elif (hcmd == "set_4keyremote"):
                 # Set remote F6 11 02 LL HH
                 if (hexdata != ''):
                     try:
@@ -1587,7 +1627,7 @@ m_WiFi_connected = connectWiFi()
 
 # Main()
 
-print("INFO: Starting mini-gateway")
+print("INFO: Starting mini-gateway {:s}".format(VERSION))
 print_progress("Starting up")
 
 try:
@@ -1620,7 +1660,8 @@ else:
 atcmd = ''
 Opcode = ''
 
-setMeshParams(name=Meshname, pwd=Meshpass)
+if (not setMeshParams(name=Meshname, pwd=Meshpass)):
+    reset()
 
 #m_systemstatus = 0  # Reset system status so that new status can be updated within the loop
 print_status(m_systemstatus)
