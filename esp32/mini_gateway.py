@@ -1043,7 +1043,7 @@ def process_command(mqttcmd):
                         cmd(did, 0xf5, [0x07, 0x01])
                     m_expectedCallback = None
             elif (hcmd == "set_group"):
-                # Set Countdown D7 11 02 01 LL HH
+                # Set Group D7 11 02 01 LL HH
                 if (hexdata != ''):
                     try:
                         if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
@@ -1056,7 +1056,7 @@ def process_command(mqttcmd):
                     cmd(did, 0xD7, [0x01] + list(data))
                     m_expectedCallback = None
             elif (hcmd == "set_remote"):
-                # Set Countdown D7 11 02 01 LL HH
+                # Set remote EC 11 02 LL HH
                 if (hexdata != ''):
                     try:
                         if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
