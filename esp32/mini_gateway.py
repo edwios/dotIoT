@@ -513,7 +513,7 @@ def getReply(timeout=10):
 
 def check_callbacks():
     global m_cbreplies, DEBUG
-    getReply(3)
+    getReply()
     # Todo: how not to eat OK's from getReply?
     if len(m_cbreplies) == 0:
         return
