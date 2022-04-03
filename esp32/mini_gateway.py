@@ -549,11 +549,12 @@ def process_callback(devaddr, callback):
     mesg = {}
     if DEBUG: print("Processing call back from %04x" % devaddr)
     name = rev_lookup_device(devaddr)
-    if (name is None) or (callback is None):
-        print("ERROR: process_callback(): cannot find device name with address %d or no callback is given" % devaddr)
+    if name is None:
+        name = '0x{:02x}'.format(devaddr)
+    if callback is None:
         return
     if ((len(callback) % 2) != 0) or (len(callback) == 0):
-        print("ERROR: process_callback(): corrupted callback %s from %s" % (callback, name))
+        print("ERROR: process_callback(): empty or corrupted callback %s from %s" % (callback, name))
         return
     try:
         data = ubinascii.unhexlify(callback)
@@ -567,11 +568,15 @@ def process_callback(devaddr, callback):
     opcode = data[0]   
     mesg['device_name'] = name
     mesg['device_id'] = devaddr
-    if opcode == 0xDC:
+    if opcode == 0xDC or opcode == 0xC2:
         # Status notify report
         if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
-        bgt = data[1]
-        cct = data[2]
+        bgt = cct = 0
+        if opcode == 0xDC:
+            bgt = data[1]
+            cct = data[2]
+        else:
+            bgt = data[5] & 0x1
         state = None
         if bgt is not None:
             if bgt > 0:
@@ -757,21 +762,18 @@ def process_callback(devaddr, callback):
                 current = (data[12]<<24) + (data[11]<<16) + (data[10]<<8) + data[9]
                 mesg.update({"type":"electricity", "voltage":{"value":voltage, "unit":"V"}, "current":{"value":current, "unit":"A"}})
             update_hass2(mesg)
-    elif m_expectedCallback is not None:
-        if len(m_expectedCallback) > 1:
-            """
-            Todo:
-            m_expectedCallback shall be a stack consists of the array [device id, opcode, subcommand, pars]
-            As more and more opcode callbacks are supported, m_expectedCallback will have mush less significant
-            """
-            if (opcode == m_expectedCallback[1]):
-                if DEBUG: print("Call back subcommand: %02X" % opcode)
-                if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
-                mesg.update({"opcode":'{:02X}'.format(opcode), "pars":callback[2:26], "type":"callback"})
-                m_expectedCallback = None
     else:
-        if DEBUG: print("Unsupported call back opcode %02X" % opcode)
-        return
+        """
+        Todo:
+        m_expectedCallback shall be a stack consists of the array [device id, opcode, subcommand, pars]
+        As more and more opcode callbacks are supported, m_expectedCallback will have mush less significant
+        """
+#        if (opcode == m_expectedCallback[1]):
+        if DEBUG: print("Call back subcommand: %02X" % opcode)
+        if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
+        mesg.update({"callback":{"opcode":'{:02X}'.format(opcode), "pars":callback[2:26]}, "type":"callback"})
+        m_expectedCallback = None
+    return
     mesg['timestamp'] = str(time.time())
     update_status_mqtt(mesg)
     gc.collect()
