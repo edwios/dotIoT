@@ -5,6 +5,7 @@ import time
 from argparse import ArgumentParser
 import json
 from bluepy import btle  # linux only (no mac)
+from bluepy.btle import Scanner, DefaultDelegate
 import paho.mqtt.client as mqtt
 import secrets
 import deviceconfig
@@ -15,13 +16,128 @@ MQTT_PUB_TOPIC_STATUS = 'sensornet/env/{:s}/status'
 MQTT_USER = secrets.MQTT_USER
 MQTT_PASS = secrets.MQTT_PASS
 
-m_devicemapping = deviceconfig.devices
+try:
+    m_devicemapping = deviceconfig.devices
+except:
+    m_devicemapping = {}
+try:
+    m_bl01_devicemapping = deviceconfig.bl01_devices
+except:
+    m_bl01_devicemapping = {}
+m_newDev = False
+m_devupdated = False
+m_allFound = False
+m_BL01Devices = {}
 
 # BLE IoT Sensor Demo
 # Author: Gary Stafford
 # Reference: https://elinux.org/RPi_Bluetooth_LE
 # Requirements: python3 -m pip install --user -r requirements.txt
 # To Run: python3 ./rasppi_ble_receiver.py d1:aa:89:0c:ee:82 <- MAC address - change me!
+
+class ScanDelegate(DefaultDelegate):
+    def __init__(self):
+        #print('Starting scanning')
+        DefaultDelegate.__init__(self)
+
+    def handleDiscovery(self, dev, isNewDev, isNewData):
+        if isNewDev:
+            m_newdev = True
+        elif isNewData:
+            m_devupdated = True
+
+
+def foundBL01Devices(devnames, iface=0, timeout = 60):
+    dotIoTDevices = {}
+    devices = {}
+
+    scanner = Scanner(iface).withDelegate(ScanDelegate())
+    numdevfound = 0
+    devid = 0
+    starttime = time.monotonic()
+
+    while numdevfound < len(devnames) and time.monotonic() < starttime + timeout:
+        try:
+            devices = scanner.scan()
+        except:
+            print('Scan done')
+            pass
+        # print('{:d} found'.format(len(devices)))
+        for dev in devices:
+    #       print ("Device %s (%s), RSSI=%d dB" % (dev.addr, dev.addrType, dev.rssi))
+            for (adtype, _, value) in dev.getScanData():
+                # print ( "[%s]  %s = %s" % (adtype, desc, value))
+                if ((adtype == 9 or adtype == 8) and (value in devnames)):
+                    if not (dev.addr in dotIoTDevices):
+                        adev = {"name": value, "id": devid, "rssi": dev.rssi}
+                        dotIoTDevices[dev.addr] = adev
+                        devid += 1
+                        #print("[%s] MAC:%s" % (value, dev.addr))
+                        #print(dotIoTDevices)
+            for (adtype, _, value) in dev.getScanData():
+                if ((adtype == 255) and (dev.addr in dotIoTDevices) and not ('data' in dotIoTDevices[dev.addr])):
+                    #print('Data {:s}'.format(bytes.hex(value)))
+                    dotIoTDevices[dev.addr]['data'] = value
+                    # print(dotIoTDevices)
+                    numdevfound += 1  # only count when we got all data for a device
+                    if DEBUG: print(dotIoTDevices[dev.addr])
+        time.sleep(3)
+    
+    foundAll = True
+    # Pruning incomplete entries
+    # This is probably unnecessary but better safe than sorry
+    if numdevfound != len(devnames):
+        foundAll = False
+        for addr in list(dotIoTDevices):
+            if not('data' in dotIoTDevices[addr]):
+                del dotIoTDevices[addr]
+    return (dotIoTDevices, foundAll)
+
+
+def parseBL01Devices(devices, client):
+    global DEBUG
+
+    if len(devices) == 0:
+        return
+    for addr in devices:
+        res = {}
+        data = devices[addr]['data']
+        if DEBUG: print('{:s} data: {:s}'.format(addr, data))
+        if len(data) != 20:
+            break
+        if not data.startswith('2197'):
+            break  # Not ours
+        mac_address = addr.upper()
+        try:
+            devicename = m_bl01_devicemapping[mac_address]
+        except:
+            devicename = mac_address
+        batts = data[12:14]
+        temps = data[14:18]
+        humis = data[18:]
+        batt = int.from_bytes(bytes.fromhex(batts), 'little', signed=False)  & 0x7F
+        temp = int.from_bytes(bytes.fromhex(temps), 'little', signed=True)
+        humi = int.from_bytes(bytes.fromhex(humis), 'little', signed=False)
+        dt = time.strftime('%F %H:%M:%S')
+        res['temperature'] = round(((temp/10.0-40)-32)*5/9, 1)
+        res['humidity'] = humi
+        mesg = {"device_mac": mac_address, "type":"environment", "datetime": dt, "device_name":devicename, "batt":batt}
+        mesg['readings'] = res
+        mesg['state'] = 'ON'
+        jstr = json.dumps(mesg)
+        if DEBUG:
+            dt = time.strftime('%F %H:%M:%S')
+            print(jstr)
+        mtopic = MQTT_PUB_TOPIC_STATUS.format(devicename)
+        if client:
+            client.publish(mtopic, jstr, retain=True)
+    return True
+
+
+def processBLE01Device(devicenames, iface, client, timeout=60):
+    global m_BL01Devices, m_allFound, DEBUG
+    m_BL01Devices, m_allFound = foundBL01Devices(devicenames, iface, timeout)
+    parseBL01Devices(m_BL01Devices, client)
 
 
 def readenv(mac_address, client, iface):
@@ -129,21 +245,21 @@ def readenv(mac_address, client, iface):
         res['temperature'] = t
     else:
         dt = time.strftime('%F %H:%M:%S')
-        print("[%s] ERROR: Cannot read temperature from evice %s!" % (dt, mac_address))
+        print("[%s] ERROR: Cannot read temperature from device %s!" % (dt, mac_address))
     if (sh == 0):
         res['humidity'] = h
     else:
-        print("[%s] ERROR: Cannot read humidity from evice %s!" % (dt, mac_address))
+        print("[%s] ERROR: Cannot read humidity from device %s!" % (dt, mac_address))
     if (sp == 0):
         res['pressure'] = p
     else:
         dt = time.strftime('%F %H:%M:%S')
-        print("[%s] ERROR: Cannot read pressure from evice %s!" % (dt, mac_address))
+        print("[%s] ERROR: Cannot read pressure from device %s!" % (dt, mac_address))
     if (sl == 0):
         res['lux'] = l
     else:
         dt = time.strftime('%F %H:%M:%S')
-        print("[%s] ERROR: Cannot read lux from evice %s!" % (dt, mac_address))
+        print("[%s] ERROR: Cannot read lux from device %s!" % (dt, mac_address))
     try:
         devicename = m_devicemapping[mac_address]
     except:
@@ -279,7 +395,8 @@ def get_args():
     arg_parser.add_argument("-i", "--interface", help="BLE interface", default=0)
     arg_parser.add_argument("-m", "--mac", help="MAC address of device to connect", default=None)
     arg_parser.add_argument("-d", "--debug", help="Debug", action='store_true')
-    arg_parser.add_argument("-H", "--mqtt", help="MQTT broker address ", default="10.0.1.250")
+    arg_parser.add_argument("-H", "--mqtt", help="MQTT broker address", default="10.0.1.250")
+    arg_parser.add_argument("-u", "--uct", help="Read UCTech devices", action='store_true')
     args = arg_parser.parse_args()
     return args
 
@@ -325,7 +442,7 @@ m_auto_reconnect = True
 
 def main():
     global DEBUG
-    global m_connected, m_auto_reconnect, m_devicemapping
+    global m_connected, m_auto_reconnect, m_devicemapping, m_bl01_devicemapping
 
     # get args
     args = get_args()
@@ -335,6 +452,7 @@ def main():
     mqtt_hub = args.mqtt
     iface = args.interface
     singleshot = args.singleshot
+    readUCT = args.uct
 
     m_connected = False
     m_auto_reconnect = False
@@ -352,11 +470,14 @@ def main():
                     if DEBUG: print("Reading {:d} or {:d} from {:s}".format(n, len(m_devicemapping), mac))
                     err = readenv(mac, mqttclient, iface)
                     n = n + 1
-                    if (n <= len(m_devicemapping)) and not err:
+                    if (n <= len(m_devicemapping)):
                         if DEBUG: print("Waiting 30s for next one")
-                        time.sleep(30)
+                        time.sleep(5)   # Wait 5s
             else:
                 readenv(mac_address, mqttclient, iface)
+            if (len(m_bl01_devicemapping) > 0) and readUCT:
+                processBLE01Device(['BL01T','BL01T','BL01R'], iface, mqttclient)
+
             if counter == 0:
                 pause_time = sleeptime
             else:
