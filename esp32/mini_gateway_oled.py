@@ -456,14 +456,13 @@ def getReply(timeout=10):
                     m_cbreplies.append(line)
                 else:
                     reply.append(line)
-        # if DEBUG: print("DEBUG: received %d lines of reply as %s" % (len(reply), reply))
-        # if DEBUG: print("DEBUG: received %d lines of callbacks as %s" % (len(m_cbreplies), m_cbreplies))
+        # if DEBUG: print("DEBUG: %s + %s" % (reply, m_cbreplies))
         return reply
 
 
 def check_callbacks():
     global m_cbreplies, DEBUG
-    getReply(3)
+    getReply()
     # Todo: how not to eat OK's from getReply?
     if len(m_cbreplies) == 0:
         return
@@ -487,7 +486,7 @@ def check_callbacks():
                     devaddr = -1
                 else:
                     devaddr = t[0] * 256 + t[1]
-                if (len(callback) != length * 2) or (length == 0) or (devaddr == -1):
+                if (length == 0) or (devaddr == -1):
                     print("ERROR: Corrupted callback packet found")
                 else:
                     process_callback(devaddr, callback)
@@ -502,11 +501,15 @@ def process_callback(devaddr, callback):
     mesg = {}
     # if DEBUG: print("Processing call back from %04x" % devaddr)
     name = rev_lookup_device(devaddr)
-    if (name is None) or (callback is None):
-        print("ERROR: process_callback(): cannot find device name with address %d or no callback is given" % devaddr)
+    if (name is None):
+        name = '0x{:02x}'.format(devaddr)
+    if callback is None:
+#        print("ERROR: process_callback(): cannot find device name with address %d or no callback is given" % devaddr)
         return
+#    if DEBUG and (len(callback) > 0):
+#        'DEBUG: callback from {:s}/{:d} = {:s}'.format(name, devaddr, ubinascii.unhexlify(callback))
     if ((len(callback) % 2) != 0) or (len(callback) == 0):
-        print("ERROR: process_callback(): corrupted callback %s from %s" % (callback, name))
+        print("ERROR: process_callback(): empty or corrupted callback from %s" % (name))
         return
     try:
         data = ubinascii.unhexlify(callback)
@@ -518,14 +521,18 @@ def process_callback(devaddr, callback):
     if len(data) == 0:
         return
     opcode = data[0]
-    if m_c1 == '' and m_c2 == '':
-        print_results('{:s},{:02X}'.format(name[:16], opcode), None)
+#    if m_c1 == '' and m_c2 == '':
+#        print_results('{:s},{:02X}'.format(name[:16], opcode), None)
     mesg.update({"device_name":name, "device_id":devaddr})
-    if opcode == 0xDC:
+    if opcode == 0xDC or opcode == 0xC2:
         # Status notify report
         # if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
-        bgt = data[1]
-        cct = data[2]
+        bgt = cct = 0
+        if opcode == 0xDC:
+            bgt = data[1]
+            cct = data[2]
+        else:
+            bgt = data[5] & 0x1
         state = None
         mesg = {"device_name":name}
         if bgt is not None:
@@ -729,19 +736,25 @@ def process_callback(devaddr, callback):
                 mesg.update({"type":"electricity", "voltage":{"value":voltage, "unit":"V"}, "current":{"value":current, "unit":"A"}})
                 s1 = '{:d}V'.format(voltage)
                 s2 = '{:d}A'.format(current)
-    elif (len(m_expectedCallback) > 0) and (opcode == m_expectedCallback[0]):
-        if DEBUG: print("Call back subcommand: %02X" % opcode)
-        if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
-        mesg.update({"opcode":'{:02X}'.format(opcode), "pars":callback[2:26], "type":"callback"})
+#    elif (len(m_expectedCallback) > 0) and (opcode == m_expectedCallback[0]):
+#        if DEBUG: print("Call back subcommand: %02X" % opcode)
+#        if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
+#        mesg.update({"opcode":'{:02X}'.format(opcode), "pars":callback[2:26], "type":"callback"})
+#        m_c1 = 'op:{:02X}'.format(opcode)
+#        m_c2 = callback[2:16]
+#        mesg['opcode'] = m_c1
+#        mesg['pars'] = m_c2
+#        mesg['type'] = 'callback'
+    if DEBUG:
+        print("{:s} called back opcode {:02X} with pars [{:s}]".format(name, opcode, callback[2:26]))
         m_c1 = 'op:{:02X}'.format(opcode)
         m_c2 = callback[2:16]
-    else:
-        if DEBUG: print("Unsupported call back opcode %02X with pars [%s]" % (opcode, callback[2:26]))
-        m_c1 = 'op:{:02X}'.format(opcode)
-        m_c2 = callback[2:16]
-        mesg = {}
+        mesg['callback'] = {}
+        mesg['callback']['opcode'] = m_c1
+        mesg['callback']['pars'] = m_c2
     if len(mesg) > 0:
         mesg.update({"timestamp":str(time.time())})
+        mesg['device_addr']=devaddr
         update_status_mqtt(mesg)
     if m_c1 != '' or m_c2 != '':
         print_results(m_c1, m_c2)
@@ -791,7 +804,11 @@ def update_status_mqtt(mesg):
         return
 #    if DEBUG: print("DEBUG: JSON to publish %s" % jstr)
     if m_client:
-        m_client.publish(topic, jstr.encode('utf-8'))
+        try:
+            m_client.publish(topic, jstr.encode('utf-8'))
+        except:
+            print("ERROR: mqtt host unreachable")
+            return
 
 
 def process_command(mqttcmd):
@@ -1015,6 +1032,19 @@ def process_command(mqttcmd):
                     cmd(did, 0xD7, [0x00] + list(data))
                     m_expectedCallback = None
             elif (hcmd == "set_remote"):
+                # Set remote EC 11 02 LL HH
+                if (hexdata != ''):
+                    try:
+                        if (hexdata[:2] == '0x' or hexdata[:2] == '0X'):
+                            i = int(hexdata, 16)
+                        else:
+                            i = int(hexdata)
+                    except:
+                        i = 0x8001
+                    data = i.to_bytes(2, 'little')
+                    cmd(did, 0xEC, list(data))
+                    m_expectedCallback = None
+            elif (hcmd == "set_4keyremote"):
                 # Set remote F6 11 02 LL HH
                 if (hexdata != ''):
                     try:
@@ -1524,7 +1554,10 @@ m_WiFi_connected = do_connect(SSID, PASS)
 if m_WiFi_connected:
     print_progress("Wi-Fi OK")
     wifi_error(0)
-    ntptime.settime()
+    try:
+        ntptime.settime()
+    except:
+        pass
     # if DEBUG: print("Connecting to MQTT server at %s" % MQTT_SERVER)
     if MQTT_USER == '':
         MQTT_USER = None
@@ -1611,7 +1644,10 @@ while True:
             wifi_error(1)
 #            print("ERROR: Cannot connect back to Wi-Fi")
         else:
-            ntptime.settime()
+            try:
+                ntptime.settime()
+            except:
+                pass
             try:
                 m_client = MQTTClient(MQTT_CLIENT_ID, MQTT_SERVER, user=MQTT_USER, password=MQTT_PASS)
             except:
