@@ -19,3 +19,8 @@ LED3 = Pin(22)
 KEY1 = Pin(35)
 
 N_LED = 6
+
+MESH_MOD_TX=18
+MESH_MOD_RX=4
+
+UART_DELAY_CRLF = True

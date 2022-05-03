@@ -1,10 +1,11 @@
 # DEBUG = False    # Global debug printing, shall be set in boot.py
 USEOLED = False
-VERSION = '2.1'
+VERSION = '2.3'
 
 import time
 from umqtt.simple import MQTTClient
-from machine import Pin, UART, PWM, reset, I2C
+from machine import Pin, UART, PWM, reset, I2C, freq
+import machine
 import network
 import select
 import esp32
@@ -62,6 +63,8 @@ LED5 = config.LED5
 LED6 = config.LED6
 KEY1 = config.KEY1
 NLED = config.N_LED
+MESH_MOD_TX = config.MESH_MOD_TX
+MESH_MOD_RX = config.MESH_MOD_RX
 
 ON_DATA = [1, 1, 0]
 OFF_DATA = [0, 1, 0]
@@ -220,10 +223,19 @@ def initMQTT(mqtt_client):
 def _send_command(cmd: str = 'AT'):
     """Internal method to send AT commands to BLE module appending 0D0A to the end"""
     global DEBUG, STATUS_TO_MESH
+    global m_uart
     if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
     print_status(STATUS_TO_MESH)
-    cmd = cmd + '\r\n'
-    m_uart.write(cmd)
+    try:
+        UART_DELAY_CRLF
+    except NameError: UART_DELAY_CRLF = False
+    if not UART_DELAY_CRLF:
+        m_uart.write(cmd + '\r\n')
+    else:
+        m_uart.write(cmd)
+        time.sleep(0.01)
+        cmd = '\r\n'
+        m_uart.write(cmd)
     time.sleep(0.3)
 
 
@@ -492,7 +504,7 @@ def getReply(timeout=10):
             if file[0] == m_uart:
                 ch = m_uart.read(1)
                 data = data + chr(ch[0])
-                #if DEBUG: print("getReply: %s" % data)
+                if DEBUG: print("getReply: %s" % data)
 
     if data is not '':
         # Show the byte as 2 hex digits then in the default way
@@ -568,26 +580,34 @@ def process_callback(devaddr, callback):
     opcode = data[0]   
     mesg['device_name'] = name
     mesg['device_id'] = devaddr
-    if opcode == 0xDC or opcode == 0xC2:
+    if opcode == 0xDC or opcode == 0xC2 or opcode == 0xEA:
         # Status notify report
         if DEBUG: print("process_callback(): Got status call back from %s (%04x)" % (name, devaddr))
         bgt = cct = 0
-        if opcode == 0xDC:
+        state = None
+        if opcode == 0xDC:  # Normal state reports
             bgt = data[1]
             cct = data[2]
-        else:
-            bgt = data[5] & 0x1
-        state = None
-        if bgt is not None:
-            if bgt > 0:
+            if bgt is not None:
+                if bgt > 0:
+                    state = 'on'
+                else:
+                    state = 'off'
+        else:               # Wall switches state reports
+            if (data[5] == 0x18) or (data[5] == 0x19) or (data[5] == 0x11):
                 state = 'on'
-            else:
+            elif (data[5] == 0x10):
                 state = 'off'
+            bgt = data[6]
+            cct = data[7]
+            if bgt == 0:
+                state = 'off'   # Lighting focused
+        if state is not None:   # only update to HASS if there is a state to report
             mesg['state'] = state
             mesg['brightness'] = bgt
-        if cct is not None:
-            mesg['cct'] = cct
-        update_hass(name, state, bgt, cct)
+            if cct is not None:
+                mesg['cct'] = cct
+            update_hass(name, state, bgt, cct)
     elif opcode == 0xDB:
         # User_all notify report
         # +DATA:DB1102006464FF
@@ -600,7 +620,8 @@ def process_callback(devaddr, callback):
                 state = 'off'
             mesg['state'] = state
             mesg['brightness'] = bgt
-        update_hass(name, state, bgt, None)
+        if state is not None:   # only update to HASS if there is a state to report
+            update_hass(name, state, bgt, None)
     elif opcode == 0xE7:
         # +DATA:0001,23,E71102A50192097F170A0000
         cbs = data[3]
@@ -773,7 +794,6 @@ def process_callback(devaddr, callback):
         if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
         mesg.update({"callback":{"opcode":'{:02X}'.format(opcode), "pars":callback[2:26]}, "type":"callback"})
         m_expectedCallback = None
-    return
     mesg['timestamp'] = str(time.time())
     update_status_mqtt(mesg)
     gc.collect()
@@ -1436,11 +1456,13 @@ def board_init():
     led.append(LED5)
     LED6.init(mode=Pin.OUT)
     led.append(LED6)
+    esp32.RMT.bitstream_channel(None)
     for i in range(0, NLED):
         pwmled.append(None)
         status_led.append(None)
-        rmt = esp32.RMT(i, pin=led[i])
-        rmt.deinit()
+        if (i < 3):
+            rmt = esp32.RMT(i, pin=led[i])
+            rmt.deinit()
         pwm = PWM(led[i])
         pwm.deinit()
         led[i].init(mode=Pin.OUT)
@@ -1645,7 +1667,7 @@ m_devices = retrieveDeviceDB(Device_Cache)
 
 if DEBUG: print("Initialising UART to BLE")
 print_progress("Init UART")
-m_uart = UART(2, tx=18, rx=4)                         # init with given baudrate
+m_uart = UART(2, tx=MESH_MOD_TX, rx=MESH_MOD_RX)  # Init UART
 m_uart.init(115200, bits=8, parity=None, stop=1, timeout=10)
 
 poll = select.poll()
