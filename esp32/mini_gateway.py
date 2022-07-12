@@ -35,6 +35,8 @@ DEFAULT_DSTADDR = "FFFF"
 DEFAULT_OPCODE  = "D0"
 DEFAULT_PARS    = "010100"
 
+MPU = config.MPU
+
 MQTT_SERVER = config.MQTT_SERVER
 MQTT_CLIENT_ID = config.MQTT_CLIENT_ID
 MQTT_TOPIC_PREFIX = config.MQTT_TOPIC_PREFIX
@@ -65,6 +67,8 @@ KEY1 = config.KEY1
 NLED = config.N_LED
 MESH_MOD_TX = config.MESH_MOD_TX
 MESH_MOD_RX = config.MESH_MOD_RX
+UART_DELAY_CRLF = config.UART_DELAY_CRLF
+UART_DELAY_CRLF_TIME = config.UART_DELAY_CRLF_TIME
 
 ON_DATA = [1, 1, 0]
 OFF_DATA = [0, 1, 0]
@@ -226,14 +230,13 @@ def _send_command(cmd: str = 'AT'):
     global m_uart
     if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
     print_status(STATUS_TO_MESH)
-    try:
-        UART_DELAY_CRLF
-    except NameError: UART_DELAY_CRLF = False
     if not UART_DELAY_CRLF:
+        if DEBUG: print("DEBUG: Sending %s to BLE Module" % cmd)
         m_uart.write(cmd + '\r\n')
     else:
+        if DEBUG: print("DEBUG: Sending %s (delayed CRLF) to BLE Module" % cmd)
         m_uart.write(cmd)
-        time.sleep(0.01)
+        time.sleep(UART_DELAY_CRLF_TIME)
         cmd = '\r\n'
         m_uart.write(cmd)
     time.sleep(0.3)
@@ -814,6 +817,7 @@ def update_hass(name, state, brightness, cct):
         if cct <= 100:
             cct1 = 100 - cct
             hasscct = int(cct1 * 347 / 100 + 153)
+        hass_mesg['color_mode'] = "['color_temp']"
         hass_mesg['color_temp'] = hasscct
         hass_mesg['batt'] = cct
     hass_mesg['timestamp'] = str(time.time())
@@ -1456,11 +1460,12 @@ def board_init():
     led.append(LED5)
     LED6.init(mode=Pin.OUT)
     led.append(LED6)
-    esp32.RMT.bitstream_channel(None)
+    if (MPU == 2):
+        esp32.RMT.bitstream_channel(None)
     for i in range(0, NLED):
         pwmled.append(None)
         status_led.append(None)
-        if (i < 3):
+        if ((i < 3) and (MPU == 2)) or (MPU == 1):  ## ESP32S3 does not allow more than 3 RMT devices
             rmt = esp32.RMT(i, pin=led[i])
             rmt.deinit()
         pwm = PWM(led[i])
