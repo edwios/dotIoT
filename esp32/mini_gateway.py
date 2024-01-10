@@ -1,6 +1,6 @@
 # DEBUG = False    # Global debug printing, shall be set in boot.py
 USEOLED = False
-VERSION = '2.3'
+VERSION = '2.4'
 
 import time
 from umqtt.simple import MQTTClient
@@ -716,23 +716,21 @@ def process_callback(devaddr, callback):
         elif cbs == 0x82 or cbs == 0x83:     # Got Sunrise/Sunset time report
             time_h = data[5]
             time_m = data[6]
+            timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
             if cbs == 0x82:
                 rtype = "Sunrise"
             elif cbs == 0x83:     # Got Sunset time
                 rtype = "Sunset"
-            if data[14] != 0xFF:
+            if (data[7] < 2) and (data[8] < 2) and (data[9] < 2):
                 statusStr = m_rdevstatuses[data[7]]
                 actionStr = m_rdevactions[data[8]]
                 offsettypeStr = m_rastrooffsets[data[9]]
                 offset_h = data[10]
                 offset_m = data[11]
-                # offset_hStr = '{:02d} hour'.format(offset_h)
-                # offset_mStr = '{:02d} min'.format(offset_m)
-                timeStr = '{:02d}:{:02d}'.format(time_h, time_m)
                 offsetStr = '{:02d}:{:02d}'.format(offset_h, offset_m)
                 mesg.update({"type":"astro", rtype:timeStr, "offset":offsetStr, "position":offsettypeStr, "action":actionStr, "status":statusStr})
             else:
-                mesg['type'] = 'astro'
+                mesg.update({"type":"astro", rtype:timeStr, "status":"Not set"})
         elif cbs == 0x84:
             # Get DST
             summer_start_month = data[5]
@@ -1051,6 +1049,25 @@ def process_command(mqttcmd):
                         print("ERROR: invalid parameters, Bmm,Bdd,Emm,Edd,Offset (int),Enabled (0|1)")
                     else:
                         setdst(did, bmm, bdd, emm, edd, ofs, ena)
+            elif (hcmd == "set_sunrise"):
+                # did/set_sunrise:on|off,before|after,hh,mm,enabled
+                # setastro(did, bastro, baction, bpos, bhh, bmm, bwk, enabled)
+                if (hexdata != ''):
+                    try:
+                        (baction, bpos, bhh, bmm, ena) = hexdata.split(',')
+                    except:
+                        print("ERROR: invalid parameters, did/set_sunrise:on|off,before|after,hh,mm,enabled (0|1)")
+                    else:
+                        setastro(did, 0, baction, bpos, bhh, bmm, 0xff, ena)
+            elif (hcmd == "set_sunset"):
+                # setastro(did, bastro, baction, bpos, bhh, bmm, bwk, enabled)
+                if (hexdata != ''):
+                    try:
+                        (baction, bpos, bhh, bmm, ena) = hexdata.split(',')
+                    except:
+                        print("ERROR: invalid parameters, did/set_sunrise:on|off,before|after,hh,mm,enabled (0|1)")
+                    else:
+                        setastro(did, 1, baction, bpos, bhh, bmm, 0xff, ena)
             elif (hcmd == "set_countdown"):
                 # Set Countdown F5 11 02 06 HH MM
                 if (hexdata != ''):
@@ -1191,6 +1208,47 @@ def setdst(did, bmm, bdd, emm, edd, offset, enabled):
     # Let's do it by setting the time to ALL devices (thus 0xFFFF)
     cmd(did, 0xf5, [0x0a] + list(data))
     
+
+def setastro(did, bastro, baction, bpos, bhh, bmm, bwk, enabled):
+    #
+    # astro
+    #    0 = sunrise, 1 = sunset
+    # action
+    #    0 = off, 1 = on
+    # pos
+    #    0 = before, 1 = after
+    # wk
+    #    bit 0 = Sunday, bit 1-6 = Mon-Sat
+    action = 0
+    pos = 0
+    if DEBUG:
+        print("Setastro: ", did, bastro, baction, bpos, bhh, bmm, bwk, enabled)
+    try:
+        mm = int(bmm)
+        hh = int(bhh)
+        wk = int(bwk)
+        astro = int(bastro)
+        en = int(enabled)
+    except:
+        print("setastro: value error")
+        return
+    if (mm > 59) or (hh > 24):
+        print("setastro: time value error")
+        return
+    if (baction.lower() == "on"):
+        action = 1
+    if (bpos.lower() == "after"):
+        pos = 1
+    data = [en, action, pos, hh, mm, wk]
+    if DEBUG:
+        print("setastro data: ", data)
+    if astro == 1:
+        # Sunset
+        cmd(did, 0xf5, [0x05] + list(data))
+    else:
+        # Sunrise
+        cmd(did, 0xf5, [0x04] + list(data))
+
 
 
 def settimeStr(did, yyyy='0',mo='0',dd='0',hh='0',mm='0',ss='0'):
