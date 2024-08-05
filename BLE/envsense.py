@@ -113,11 +113,19 @@ def parseBL01Devices(devices, client):
         except:
             devicename = mac_address
         batts = data[12:14]
-        temps = data[14:18]
-        humis = data[18:]
+        temps = data[16:]
+        humis = data[14:16]
         batt = int.from_bytes(bytes.fromhex(batts), 'little', signed=False)  & 0x7F
         temp = int.from_bytes(bytes.fromhex(temps), 'little', signed=True)
         humi = int.from_bytes(bytes.fromhex(humis), 'little', signed=False)
+        ctemp = round(((temp/10.0-40)-32)*5/9, 1)
+        if (ctemp > 50) or (ctemp < -50):
+            if DEBUG:
+                print("Using old format: {:d}".format(temp))
+            humis = data[18:]
+            temps = data[14:18]
+            temp = int.from_bytes(bytes.fromhex(temps), 'little', signed=True)
+            humi = int.from_bytes(bytes.fromhex(humis), 'little', signed=False)
         dt = time.strftime('%F %H:%M:%S')
         res['temperature'] = round(((temp/10.0-40)-32)*5/9, 1)
         res['humidity'] = humi
@@ -344,47 +352,55 @@ def celsius_to_fahrenheit(value):
 def read_pressure(service):
     try:
         pressure_char = service.getCharacteristics("2A6D")[0]
+        pressure = pressure_char.read()
     except:
         return (1, 0)
-    pressure = pressure_char.read()
     pressure = byte_array_to_int(pressure)
     if pressure > 5000:
         pressure = decimal_exponent_one(pressure)
     if DEBUG: print(f"Barometric Pressure: {round(pressure, 2)} Pa")
+    if (pressure < 800) or (pressure > 1300):
+        return (1, 0)
     return (0, pressure)
 
 
 def read_humidity(service):
     try:
         humidity_char = service.getCharacteristics("2A6F")[0]
+        humidity = humidity_char.read()
     except:
         return (1, 0)
-    humidity = humidity_char.read()
     humidity = byte_array_to_int(humidity)
     humidity = decimal_exponent_two(humidity)
     if DEBUG: print(f"Humidity: {round(humidity, 2)}%")
+    if (humidity < 5) or (humidity > 100):
+        return (1, 0)
     return (0, humidity)
 
 
 def read_temperature(service):
     try:
         temperature_char = service.getCharacteristics("2A6E")[0]
+        temperature = temperature_char.read()
     except:
         return (1, 0)
-    temperature = temperature_char.read()
     temperature = byte_array_to_int(temperature)
     temperature = decimal_exponent_two(temperature)
     if DEBUG: print(f"Temperature: {round(temperature, 2)}°C")
+    if (temperature < -40) or (temperature > 60):
+        return (1, 0)
     return (0, temperature)
 
 def read_lux(service):
     try:
         lux_char = service.getCharacteristics("2A77")[0]
+        lux = lux_char.read()
     except:
         return (1, 0)
-    lux = lux_char.read()
     lux = byte_array_to_int(lux)
     if DEBUG: print(f"Lux: {lux}lm")
+    if (lux < 0):
+        return (1, 0)
     return (0, lux)
 
 
@@ -468,13 +484,19 @@ def main():
                 n = 1
                 for mac in m_devicemapping:
                     if DEBUG: print("Reading {:d} or {:d} from {:s}".format(n, len(m_devicemapping), mac))
-                    err = readenv(mac, mqttclient, iface)
+                    cc = 5
+                    while (cc > 0) and not readenv(mac, mqttclient, iface):
+                        cc = cc - 1
+                        err = readenv(mac, mqttclient, iface)
                     n = n + 1
                     if (n <= len(m_devicemapping)):
                         if DEBUG: print("Waiting 30s for next one")
                         time.sleep(5)   # Wait 5s
             else:
-                readenv(mac_address, mqttclient, iface)
+                cc = 5
+                while (cc > 0) and not readenv(mac_address, mqttclient, iface):
+                    cc = cc - 1
+                    readenv(mac_address, mqttclient, iface)
             if (len(m_bl01_devicemapping) > 0) and readUCT:
                 processBLE01Device(['BL01T','BL01T','BL01R'], iface, mqttclient)
 
