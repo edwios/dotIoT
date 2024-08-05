@@ -110,6 +110,13 @@ m_ralarmtypes = ["day", "week"]
 m_c1 = ''
 m_c2 = ''
 
+MQTT_CMDS = ["debug", "nodebug", "refresh", "clear"]
+TELINK_CMDS = ["on", "off", "dim", "cct", "rgb", 
+               "get_geo", "get_sunrise", "get_sunset", "get_dst", "get_astro", 
+               "get_time", "get_power", "power", "get_status", "get_countdown",
+               "get_config", "get_timer", "get_scene", "del_scene", "set_time", 
+               "set_dst", "set_countdown", "set_group", "del_group", "set_remote", 
+               "set_4keyremote", "raw", "at", "help"]
 
 def do_connect(ssid, pwd):
     """Connect to Wi-Fi network with 10s timeout"""
@@ -408,6 +415,7 @@ def mesh_send_asc(dst: int = 0x00, cmd: int = 0xd0, data: str = None):
     # if DEBUG: print("Sending to UART: %s" % atcommand)
     trials = 0
     send_command(atcommand)
+    print("Sent %s" % atcommand)
     while (not expect_reply('OK')) and (trials < 4):
         time.sleep(0.1)
         send_command(atcommand)
@@ -506,15 +514,15 @@ def process_callback(devaddr, callback):
     if callback is None:
 #        print("ERROR: process_callback(): cannot find device name with address %d or no callback is given" % devaddr)
         return
-#    if DEBUG and (len(callback) > 0):
-#        'DEBUG: callback from {:s}/{:d} = {:s}'.format(name, devaddr, ubinascii.unhexlify(callback))
+    if (len(callback) > 0):
+        print('DEBUG: callback from {:s}/{:d} = {:s}'.format(name, devaddr, callback))
     if ((len(callback) % 2) != 0) or (len(callback) == 0):
-        print("ERROR: process_callback(): empty or corrupted callback from %s" % (name))
+        print("ERROR: empty or corrupted callback from %s" % (name))
         return
     try:
         data = ubinascii.unhexlify(callback)
     except:
-        print("ERROR: process_callback(): corrupted callback %s from %s" % (callback, name))
+        print("ERROR: corrupted callback %s from %s" % (callback, name))
         return
     if (data is None):
         return   
@@ -544,7 +552,8 @@ def process_callback(devaddr, callback):
         if cct is not None:
             mesg.update({"cct":cct})
         update_hass(name, state, bgt, cct)
-        s1 = '{:s}/{:s}'.format(name, state)
+        s1 = '{:s}'.format(name)
+        s2 = '{:s} b:{:d} c:{:d}'.format(state, bgt, cct)
     elif opcode == 0xDB:
         # User_all notify report
         # +DATA:DB1102006464FF
@@ -558,7 +567,8 @@ def process_callback(devaddr, callback):
                 state = 'off'
             mesg.update({"state":state, "brightness":bgt})
         update_hass(name, state, bgt, None)
-        s1 = '{:s}/{:s}'.format(name, state)
+        s1 = '{:s}'.format(name)
+        s2 = '{:s} b:{:d}'.format(state, bgt)
     elif opcode == 0xE7:
         # +DATA:0001,23,E71102A50192097F170A0000
         cbs = data[3]
@@ -630,8 +640,8 @@ def process_callback(devaddr, callback):
             hh = data[8]
             mm = data[9]
             mesg.update({'type':'countdown', 'state':state, 'config':{'hour':HH, 'minute':MM}, 'remain':{'hour':hh, 'minute':mm}})
-            s1 = 'Set: {:02d}:{02d}'.format(HH, MM)
-            s2 = 'Rem: {:02d}:{02d}'.format(hh, mm)
+            s1 = 'Set: {:02d}:{:02d}'.format(HH, MM)
+            s2 = 'Rem: {:02d}:{:02d}'.format(hh, mm)
         elif cbs == 0x81:     # astro time geo settings
             if (data[5] == 0):
                 meridian = 'East'
@@ -714,9 +724,13 @@ def process_callback(devaddr, callback):
             mesg.update({"sunrise":sunrise_dst, "sunset":sunset_dst})
             s1 = 'Sunrise: {:s}'.format(sunrise_dst)
             s2 = 'Sunset: {:s}'.format(sunset_dst)
-        else:
-            # if DEBUG: print("Unsupported call back subcommand %02X (%02X)" % (opcode, cbs))
-            return
+#        else:
+#            # if DEBUG: print("Unsupported call back subcommand %02X (%02X)" % (opcode, cbs))
+#            m_c1 = '{:02X}'.format(opcode)
+#            m_c2 = callback[2:16]
+#            mesg['callback'] = {}
+#            mesg['callback']['opcode'] = m_c1
+#            mesg['callback']['pars'] = m_c2
     elif opcode == 0xC1:
         #c1110201e1ppppppppeeeeeeee
         cbs = data[4]
@@ -737,21 +751,11 @@ def process_callback(devaddr, callback):
                 s1 = '{:d}V'.format(voltage)
                 s2 = '{:d}A'.format(current)
 #    elif (len(m_expectedCallback) > 0) and (opcode == m_expectedCallback[0]):
-#        if DEBUG: print("Call back subcommand: %02X" % opcode)
-#        if DEBUG: print("Call back pars: {:s}".format(callback[2:]))
-#        mesg.update({"opcode":'{:02X}'.format(opcode), "pars":callback[2:26], "type":"callback"})
-#        m_c1 = 'op:{:02X}'.format(opcode)
-#        m_c2 = callback[2:16]
-#        mesg['opcode'] = m_c1
-#        mesg['pars'] = m_c2
-#        mesg['type'] = 'callback'
-    if DEBUG:
-        print("{:s} called back opcode {:02X} with pars [{:s}]".format(name, opcode, callback[2:26]))
-        m_c1 = 'op:{:02X}'.format(opcode)
-        m_c2 = callback[2:16]
-        mesg['callback'] = {}
-        mesg['callback']['opcode'] = m_c1
-        mesg['callback']['pars'] = m_c2
+    else:
+        m_c1 = '{:02X}'.format(opcode)
+        m_c2 = callback[2:32]
+        mesg.update({"opcode":m_c1, "pars":m_c2, "type":"callback"})
+    print(mesg, opcode, m_expectedCallback)
     if len(mesg) > 0:
         mesg.update({"timestamp":str(time.time())})
         mesg['device_addr']=devaddr
@@ -829,18 +833,22 @@ def process_command(mqttcmd):
     print_progress(mqttcmd[:16])
     if mqttcmd is not '':
         if '/' not in mqttcmd:
-            if (mqttcmd == "debug"):
+            try:
+                pos = MQTT_CMDS.index(mqttcmd)
+            except:
+                return
+            if (pos == 0):
                 print("Info: Debug on")
                 DEBUG = True
                 return
-            elif (mqttcmd == "nodebug"):
+            elif (pos == 1):
                 print("Info: Debug off")
                 DEBUG = False
                 return
-            elif (mqttcmd == "refresh"):
+            elif (pos == 2):
                 setMeshParams(name=Meshname, pwd=Meshpass)
                 return
-            elif (mqttcmd == "clear"):
+            elif (pos == 3):
                 m_c1 = ''
                 m_c2 = ''
                 return
@@ -850,20 +858,24 @@ def process_command(mqttcmd):
         mhcmd = mhcmd.lower()
         hexdata = ''
         if ':' in mhcmd:
-            hcmd, hexdata = mhcmd.split(':')
+            cmdstr, hexdata = mhcmd.split(':')
         else:
-            hcmd = mhcmd
+            cmdstr = mhcmd
         try:
             did = int(dids)
         except:
             did = lookup_device(dids)
         if (did > 0):
             # if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s, cmd: %s" % (mqttcmd, did, hcmd))
-            if (hcmd == "on"):
+            try:
+                hcmd = TELINK_CMDS.index(cmdstr)
+            except:
+                return
+            if (hcmd == 0):
                 cmd(did, 0xd0, ON_DATA)
-            elif (hcmd == "off"):
+            elif (hcmd == 1):
                 cmd(did, 0xd0, OFF_DATA)
-            elif (hcmd == "dim"):
+            elif (hcmd == 2):
                 if hexdata != '':
                     try:
                         i = int(hexdata)
@@ -874,7 +886,7 @@ def process_command(mqttcmd):
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xd2, list(data))
-            elif (hcmd == "cct"):
+            elif (hcmd == 3):
                 if hexdata != '':
                     try:
                         i = int(hexdata)
@@ -893,7 +905,7 @@ def process_command(mqttcmd):
                         time.sleep(0.2)
                         data = ct.to_bytes(1, 'big')
                         cmd(did, 0xe2, [0x05] + list(data))
-            elif (hcmd == "rgb"):
+            elif (hcmd == 4):
                 if hexdata != '':
                     i = int(hexdata, 16)
                     if (i > 0xFFFFFF):
@@ -901,73 +913,73 @@ def process_command(mqttcmd):
                     else:
                         data = i.to_bytes(3, 'big')
                         cmd(did, 0xe2, [0x04] + list(data))
-            elif (hcmd == "get_geo"):
+            elif (hcmd == 5):
                 cmd(did, 0xea, [0x08, 0x81])
                 m_expectedCallback = [0xeb, 0x81]       
-            elif (hcmd == "get_sunrise"):
+            elif (hcmd == 6):
                 cmd(did, 0xea, [0x08, 0x82])
                 m_expectedCallback = [0xeb, 0x82]
-            elif (hcmd == "get_sunset"):
+            elif (hcmd == 7):
                 cmd(did, 0xea, [0x08, 0x83])
                 m_expectedCallback = [0xeb, 0x83]
-            elif (hcmd == "get_dst"):
+            elif (hcmd == 8):
                 cmd(did, 0xea, [0x08, 0x84])
                 m_expectedCallback = [0xeb, 0x84]
-            elif (hcmd == "get_astro"):
+            elif (hcmd == 9):
                 cmd(did, 0xea, [0x08, 0x85])
                 m_expectedCallback = [0xeb, 0x85]
-            elif (hcmd == "get_time"):
+            elif (hcmd == 10):
                 cmd(did, 0xe8, [0x10])
                 m_expectedCallback = [0xe9, 0x00]
-            elif (hcmd == "get_power"):
+            elif (hcmd == 11) or (hcmd == 12):
                 cmd(did, 0xc0, [0x08, 0xe1])
                 m_expectedCallback = [0xc1, 0xe1]
-            elif (hcmd == "get_status"):
+            elif (hcmd == 13):
                 cmd(did, 0xda, [0x10])
                 m_expectedCallback = [0xdb, 0x00]
-            elif (hcmd == "get_countdown"):
-                cmd(did, 0xea, [0x10, 0x80])
+            elif (hcmd == 14):
+                cmd(did, 0xea, [0x08, 0x80])
                 m_expectedCallback = [did, 0xeb, 0x01]
-            elif (hcmd == "get_config"):
+            elif (hcmd == 15):
                 cmd(did, 0xea, [0x8d])
                 m_expectedCallback = [did, 0xeb, 0x01]
-            elif (hcmd == "get_timer"):
+            elif (hcmd == 16):
                 if (hexdata != ''):
                     try:
                         i = int(hexdata)
                     except:
                         print("ERROR: invalid parameters")
-                    if (i > 16):
-                        print("ERROR: Only 16 timers")
+                    if (i > 255):
+                        print("ERROR: Invalid timer index")
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xe6, [0x10] + list(data))
                         m_expectedCallback = [0xe7, 0xa5]
-            elif (hcmd == "get_scene"):
+            elif (hcmd == 17):
                 if (hexdata != ''):
                     try:
                         i = int(hexdata)
                     except:
                         print("ERROR: invalid parameters")
-                    if (i > 16):
-                        print("ERROR: Only 16 scenes")
+                    if (i > 255):
+                        print("ERROR: Invalid scene index")
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xc0, [0x10] + list(data))
                         m_expectedCallback = [0xc1, 0x00]
-            elif (hcmd == "del_scene"):
+            elif (hcmd == 18):
                 if (hexdata != ''):
                     try:
                         i = int(hexdata)
                     except:
                         print("ERROR: invalid parameters")
-                    if (i > 16):
-                        print("ERROR: Only 16 scenes")
+                    if (i > 255):
+                        print("ERROR: Invalid scene index")
                     else:
                         data = i.to_bytes(1, 'big')
                         cmd(did, 0xee, [0x00] + list(data))
                         m_expectedCallback = []
-            elif (hcmd == "set_time"):
+            elif (hcmd == 19):
                 if (hexdata == '' or hexdata == 'now'):
                     (yyyy,mo,dd,hh,mm,ss,_,_) = time.localtime()
                 if (hexdata != ''):
@@ -978,7 +990,7 @@ def process_command(mqttcmd):
 #                        print("ERROR: invalid parameters, yyyy,mo,dd,hh,mm,ss")
                         return
                 settimeStr(did, yyyy,mo,dd,hh,mm,ss)
-            elif (hcmd == "set_dst"):
+            elif (hcmd == 20):
                 if (hexdata != ''):
                     # Parse DST string Bmm,Bdd,Emm,Edd,Offset,Enabled
                     try:
@@ -988,7 +1000,7 @@ def process_command(mqttcmd):
 #                        print("ERROR: invalid parameters, Bmm,Bdd,Emm,Edd,Offset (int),Enabled (0|1)")
                     else:
                         setdst(did, bmm, bdd, emm, edd, ofs, ena)
-            elif (hcmd == "set_countdown"):
+            elif (hcmd == 21):
                 # Set Countdown F5 11 02 06 HH MM
                 if (hexdata != ''):
                     try:
@@ -1005,7 +1017,7 @@ def process_command(mqttcmd):
                         time.sleep(0.1)
                         cmd(did, 0xf5, [0x07, 0x01])
                     m_expectedCallback = None
-            elif (hcmd == "set_group"):
+            elif (hcmd == 22):
                 # Set Countdown D7 11 02 01 LL HH
                 if (hexdata != ''):
                     try:
@@ -1018,7 +1030,7 @@ def process_command(mqttcmd):
                     data = i.to_bytes(2, 'little')
                     cmd(did, 0xD7, [0x01] + list(data))
                     m_expectedCallback = None
-            elif (hcmd == "del_group"):
+            elif (hcmd == 23):
                 # Del group D7 11 02 00 LL HH
                 if (hexdata != ''):
                     try:
@@ -1031,7 +1043,7 @@ def process_command(mqttcmd):
                     data = i.to_bytes(2, 'little')
                     cmd(did, 0xD7, [0x00] + list(data))
                     m_expectedCallback = None
-            elif (hcmd == "set_remote"):
+            elif (hcmd == 24):
                 # Set remote EC 11 02 LL HH
                 if (hexdata != ''):
                     try:
@@ -1044,7 +1056,7 @@ def process_command(mqttcmd):
                     data = i.to_bytes(2, 'little')
                     cmd(did, 0xEC, list(data))
                     m_expectedCallback = None
-            elif (hcmd == "set_4keyremote"):
+            elif (hcmd == 25):
                 # Set remote F6 11 02 LL HH
                 if (hexdata != ''):
                     try:
@@ -1057,10 +1069,8 @@ def process_command(mqttcmd):
                     data = i.to_bytes(2, 'little')
                     cmd(did, 0xF6, list(data))
                     m_expectedCallback = None
-            elif (hcmd == "power"):
-                cmd(did, 0xC0, [0x08, 0xE1])
-                m_expectedCallback = None
-            elif (hcmd == 'raw'):
+            elif (hcmd == 26):
+                # raw:XXYYPPPP... XX=op code, YY=callback, PPPP=Pars
                 if hexdata != '':
                     hexlist = list(hexdata[i:i+2] for i in range(0, len(hexdata), 2))
                     try:
@@ -1085,7 +1095,7 @@ def process_command(mqttcmd):
                             p = 0
                         pars.append(p)
                     cmd(did, c, pars)
-            elif (hcmd == 'at'):
+            elif (hcmd == 27):
                 if hexdata != '':
                     c = hexdata.upper()
                     send_command(c)
@@ -1416,8 +1426,10 @@ def displayInit():
         return
     oled.fill(0)
     # oled.text(String,X-pixels,y-Pixels)
+    wri_m.set_clip(True, True, False) # No row and col scroll, no line wrap
     wri_m.set_textpos(oled, 0, 0)  # verbose = False to suppress console output
     wri_m.printstring('BleuSky')
+    wri_m.wrap = False
     # Show on display
     oled.show()
 
@@ -1426,18 +1438,16 @@ def print_results(msg1, msg2):
     global wri_m, USEOLED, DEBUG, oled
     if not USEOLED:
         return
-    if msg2 is None or msg2 == '':
-        msg2 = msg1
-        msg1 = None
     if (msg1 is not None):
         wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
-        wri_m.printstring("                            ")
+        wri_m.printstring("                                      ")
         wri_m.set_textpos(oled, 32, 0)  # verbose = False to suppress console output
         wri_m.printstring(msg1)
-    wri_m.set_textpos(oled, 48, 0)  # verbose = False to suppress console output
-    wri_m.printstring("                            ")
-    wri_m.set_textpos(oled, 48, 0)  # verbose = False to suppress console output
-    wri_m.printstring(msg2)
+    if (msg2 is not None):
+        wri_m.set_textpos(oled, 48, 0)  # verbose = False to suppress console output
+        wri_m.printstring("                                      ")
+        wri_m.set_textpos(oled, 48, 0)  # verbose = False to suppress console output
+        wri_m.printstring(msg2)
     oled.show()
 
 
