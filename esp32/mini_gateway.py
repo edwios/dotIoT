@@ -430,13 +430,14 @@ def rev_lookup_device(devaddr):
         if addr == devaddr:
             try:
                 name = dev['deviceName']
+                productID = dev['deviceProductId']
             except:
                 name = None
             if DEBUG: print("Found device %s with addr %04x" % (name, devaddr))
             break
     if name is None:
         name = 'No name'
-    return name
+    return name, productID
 
 
 def mesh_send(dst=0x00, cmd=0xd0, data=[]):
@@ -507,7 +508,7 @@ def getReply(timeout=10):
             if file[0] == m_uart:
                 ch = m_uart.read(1)
                 data = data + chr(ch[0])
-                if DEBUG: print("getReply: %s" % data)
+                # if DEBUG: print("getReply: %s" % data)
 
     if data is not '':
         # Show the byte as 2 hex digits then in the default way
@@ -563,7 +564,7 @@ def process_callback(devaddr, callback):
     gc.collect()
     mesg = {}
     if DEBUG: print("Processing call back from %04x" % devaddr)
-    name = rev_lookup_device(devaddr)
+    name, prodID = rev_lookup_device(devaddr)
     if name is None:
         name = '0x{:02x}'.format(devaddr)
     if callback is None:
@@ -610,6 +611,8 @@ def process_callback(devaddr, callback):
             mesg['brightness'] = bgt
             if cct is not None:
                 mesg['cct'] = cct
+            if (prodID & 0xFF == 0x7000) and (cct == 0 or cct > 100):
+                return  #discard on invalid state from battery devices
             update_hass(name, state, bgt, cct)
     elif opcode == 0xDB:
         # User_all notify report
@@ -1168,9 +1171,7 @@ def process_command(mqttcmd):
             elif (hcmd == 'at'):
                 if hexdata != '':
                     c = hexdata.upper()
-                    send_command(c)
-                    r = getReply()
-                    print('AT command returned: {:s}'.format(r))
+                    _send_command(c)
 
 
 def isDst(day, month, dow):
@@ -1324,7 +1325,7 @@ def process_hass(topic, msg):
         except:
             did = lookup_device(device_name)
         else:
-            device_name = rev_lookup_device(did)
+            device_name, _ = rev_lookup_device(did)
         if DEBUG: print("HASS control %s for state: %s, brightness %s, cct: %s, color: %s" % (device_name, state, brightness, cct, color))
         if (did > 0):
             if DEBUG: print("DEBUG: Recevied %s from MQTT > ID: %s" % (msg, did))
